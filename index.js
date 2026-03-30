@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import fetch from "node-fetch"; // если используешь Node 22+, fetch уже встроен, можно убрать этот импорт
 
 dotenv.config();
 
@@ -44,48 +45,42 @@ async function getToken() {
   }
 }
 
-// 🧠 Проверка токена
+// 🧠 Проверка токена перед запросом
 async function ensureToken() {
   if (!jwtToken) {
     await getToken();
   }
 }
 
-// 🚀 старт
+// 🚀 Получаем токен при старте
 getToken();
 
-// 🔄 обновление токена
-setInterval(() => {
-  getToken();
-}, 1000 * 60 * 10);
+// 💡 Обновляем токен каждые 10 минут
+setInterval(getToken, 1000 * 60 * 10);
 
-// 🧪 тест
+// 🧪 Проверка сервера
 app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-// 📊 РАСЧЕТ (ИСПРАВЛЕН)
+// 📊 Ипотечный расчет
 app.post("/calculate", async (req, res) => {
   await ensureToken();
 
-  const { price } = req.body;
+  const { price, term } = req.body;
 
-  if (!price || isNaN(price)) {
-    return res.status(400).json({ error: "Некорректная цена" });
+  if (!price || !term || isNaN(price) || isNaN(term)) {
+    return res.status(400).json({ error: "Некорректные входные данные" });
   }
-
-  // 👉 перевод в копейки
-  const priceInKopecks = price * 100;
 
   const query = `
     query {
-      creditCoreGetLowestRateAgendas(
-        housingComplexUuid: "ed2f3423-a31c-4832-8552-a83d93a63e4b",
-        prices: [${priceInKopecks}]
-      ) {
-        payment
-        rate
-        period
+      calculateMortgage(input: {
+        price: ${price},
+        term: ${term}
+      }) {
+        monthlyPayment
+        totalPayment
       }
     }
   `;
@@ -95,7 +90,7 @@ app.post("/calculate", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": \`Bearer ${jwtToken}\`,
+        "Authorization": `Bearer ${jwtToken}`, // ✔ исправлено
         "User-Agent": "TildaCalculator/1.0"
       },
       body: JSON.stringify({ query })
@@ -103,30 +98,22 @@ app.post("/calculate", async (req, res) => {
 
     const data = await response.json();
 
-    if (data.errors || !data?.data?.creditCoreGetLowestRateAgendas?.length) {
+    if (!data?.data?.calculateMortgage) {
       return res.status(400).json({
         error: "Ошибка расчета",
         raw: data
       });
     }
 
-    const result = data.data.creditCoreGetLowestRateAgendas[0];
-
-    res.json({
-      monthlyPayment: result.payment / 100, // обратно в рубли
-      rate: result.rate,
-      period: result.period
-    });
-
+    res.json(data.data.calculateMortgage);
   } catch (err) {
     console.error("❌ Ошибка расчета:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 🔌 запуск
+// 🔌 запуск сервера (Railway / локально)
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
