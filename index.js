@@ -44,40 +44,48 @@ async function getToken() {
   }
 }
 
-// 🧠 Проверка токена перед запросом
+// 🧠 Проверка токена
 async function ensureToken() {
   if (!jwtToken) {
     await getToken();
   }
 }
 
-// 🚀 Получаем токен при старте
+// 🚀 старт
 getToken();
 
-// 💡 (опционально) обновляем токен каждые 10 минут
+// 🔄 обновление токена
 setInterval(() => {
   getToken();
 }, 1000 * 60 * 10);
 
-// 🧪 Проверка сервера
+// 🧪 тест
 app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-// 📊 Ипотечный расчет
+// 📊 РАСЧЕТ (ИСПРАВЛЕН)
 app.post("/calculate", async (req, res) => {
   await ensureToken();
 
-  const { price, term } = req.body;
+  const { price } = req.body;
+
+  if (!price || isNaN(price)) {
+    return res.status(400).json({ error: "Некорректная цена" });
+  }
+
+  // 👉 перевод в копейки
+  const priceInKopecks = price * 100;
 
   const query = `
     query {
-      calculateMortgage(input: {
-        price: ${price},
-        term: ${term}
-      }) {
-        monthlyPayment
-        totalPayment
+      creditCoreGetLowestRateAgendas(
+        housingComplexUuid: "ed2f3423-a31c-4832-8552-a83d93a63e4b",
+        prices: [${priceInKopecks}]
+      ) {
+        payment
+        rate
+        period
       }
     }
   `;
@@ -87,7 +95,7 @@ app.post("/calculate", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${jwtToken}`,
+        "Authorization": \`Bearer ${jwtToken}\`,
         "User-Agent": "TildaCalculator/1.0"
       },
       body: JSON.stringify({ query })
@@ -95,22 +103,28 @@ app.post("/calculate", async (req, res) => {
 
     const data = await response.json();
 
-    // защита от кривого ответа API
-    if (!data?.data?.calculateMortgage) {
+    if (data.errors || !data?.data?.creditCoreGetLowestRateAgendas?.length) {
       return res.status(400).json({
         error: "Ошибка расчета",
         raw: data
       });
     }
 
-    res.json(data.data.calculateMortgage);
+    const result = data.data.creditCoreGetLowestRateAgendas[0];
+
+    res.json({
+      monthlyPayment: result.payment / 100, // обратно в рубли
+      rate: result.rate,
+      period: result.period
+    });
+
   } catch (err) {
     console.error("❌ Ошибка расчета:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// 🔌 запуск сервера (ВАЖНО для Railway)
+// 🔌 запуск
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
