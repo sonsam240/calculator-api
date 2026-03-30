@@ -5,25 +5,28 @@ import fetch from "node-fetch"; // если Node 18+, fetch встроенный
 const app = express();
 app.use(express.json());
 
-// CORS для Tilda
+// 🔹 CORS для Tilda
 const corsOptions = {
-  origin: "https://matilda-design-001.tilda.ws",
-  methods: ["GET","POST","OPTIONS"],
-  allowedHeaders: ["Content-Type"]
+  origin: "https://matilda-design-001.tilda.ws", // разрешаем Tilda
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+  credentials: true
 };
+
 app.use(cors(corsOptions));
+// Обработка preflight-запросов
 app.options("*", cors(corsOptions));
 
-// Константы
+// 🔹 Константы
 const HOUSING_COMPLEX_UUID = "ed2f3423-a31c-4832-8552-a83d93a63e4b";
 const DVIZH_GRAPHQL_URL = "https://api.dvizh.io/graphql";
 
-// Проверка сервера
+// 🧪 Проверка сервера
 app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-// Минимальный ипотечный расчет
+// 📊 Минимальный ипотечный расчет
 app.post("/calculate", async (req, res) => {
   try {
     let { price } = req.body;
@@ -50,7 +53,7 @@ app.post("/calculate", async (req, res) => {
       }
     `;
 
-    // Ловим любые ошибки fetch
+    // 🔹 fetch с обработкой ошибок
     let data;
     try {
       const response = await fetch(DVIZH_GRAPHQL_URL, {
@@ -58,14 +61,13 @@ app.post("/calculate", async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
       });
-
       data = await response.json();
     } catch (fetchErr) {
       console.error("Ошибка запроса к Dvizh:", fetchErr);
       return res.status(502).json({ error: "Не удалось получить данные с Dvizh" });
     }
 
-    // Проверяем ответ
+    // 🔹 Проверка ответа
     if (!data?.data?.creditCoreGetLowestRateAgendas || !data.data.creditCoreGetLowestRateAgendas.length) {
       console.warn("Нет доступных предложений", data);
       return res.status(200).json({ error: "Нет доступных предложений", raw: data });
@@ -73,6 +75,7 @@ app.post("/calculate", async (req, res) => {
 
     const offer = data.data.creditCoreGetLowestRateAgendas[0];
 
+    // 🔹 Возвращаем клиенту минимальный платеж
     res.json({
       agendaName: offer.agendaName || "—",
       monthlyPayment: offer.payment || 0,
@@ -87,7 +90,7 @@ app.post("/calculate", async (req, res) => {
   }
 });
 
-// Запуск сервера
+// 🔌 Запуск сервера
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
