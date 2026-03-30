@@ -1,118 +1,79 @@
 import express from "express";
-import dotenv from "dotenv";
 import cors from "cors";
-
-dotenv.config();
+import fetch from "node-fetch"; // если Node 18+, fetch встроенный, можно убрать
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-let jwtToken = "";
-
-// 🔑 Получение токена
-async function getToken() {
-  const query = `
-    mutation {
-      loanOfficer_SignIn(input: {
-        email: "${process.env.DVIZH_EMAIL}",
-        password: "${process.env.DVIZH_PASSWORD}"
-      })
-    }
-  `;
-
-  try {
-    const res = await fetch(process.env.GRAPHQL_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "TildaCalculator/1.0"
-      },
-      body: JSON.stringify({ query })
-    });
-
-    const data = await res.json();
-
-    if (data?.data?.loanOfficer_SignIn) {
-      jwtToken = data.data.loanOfficer_SignIn;
-      console.log("✅ JWT token получен");
-    } else {
-      console.error("❌ Ошибка токена:", data);
-    }
-  } catch (err) {
-    console.error("❌ Ошибка запроса токена:", err);
-  }
-}
-
-// 🧠 Проверка токена перед запросом
-async function ensureToken() {
-  if (!jwtToken) {
-    await getToken();
-  }
-}
-
-// 🚀 Получаем токен при старте
-getToken();
-
-// 💡 обновляем токен каждые 10 минут
-setInterval(() => {
-  getToken();
-}, 1000 * 60 * 10);
+// Тестовый ЖК, можно менять на реальный
+const HOUSING_COMPLEX_UUID = "ed2f3423-a31c-4832-8552-a83d93a63e4b";
+const DVIZH_GRAPHQL_URL = "https://api.dvizh.io/graphql";
 
 // 🧪 Проверка сервера
 app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-// 📊 Ипотечный расчет
+// 📊 Минимальный ипотечный расчет
 app.post("/calculate", async (req, res) => {
-  await ensureToken();
-
-  const { price, term } = req.body;
-
-  const query = `
-    query {
-      calculateMortgage(input: {
-        price: ${price},
-        term: ${term}
-      }) {
-        monthlyPayment
-        totalPayment
-      }
-    }
-  `;
-
   try {
-    const response = await fetch(process.env.GRAPHQL_ENDPOINT, {
+    let { price } = req.body;
+
+    if (!price || isNaN(price)) {
+      return res.status(400).json({ error: "Введите корректную цену" });
+    }
+
+    // Конвертируем в копейки, если пришло в рублях
+    price = Number(price);
+
+    const query = `
+      query {
+        creditCoreGetLowestRateAgendas(
+          housingComplexUuid: "${HOUSING_COMPLEX_UUID}",
+          prices: [${price}]
+        ) {
+          agendaId
+          agendaName
+          period
+          payment
+          rate
+          price
+        }
+      }
+    `;
+
+    const response = await fetch(DVIZH_GRAPHQL_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + jwtToken,
-        "User-Agent": "TildaCalculator/1.0"
-      },
-      body: JSON.stringify({ query })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
     });
 
     const data = await response.json();
 
-    // защита от кривого ответа API
-    if (!data?.data?.calculateMortgage) {
-      return res.status(400).json({
-        error: "Ошибка расчета",
-        raw: data
-      });
+    if (!data?.data?.creditCoreGetLowestRateAgendas || data.data.creditCoreGetLowestRateAgendas.length === 0) {
+      return res.status(400).json({ error: "Нет доступных предложений", raw: data });
     }
 
-    res.json(data.data.calculateMortgage);
+    const offer = data.data.creditCoreGetLowestRateAgendas[0];
+
+    // Возвращаем минимальный платеж и базовую информацию
+    res.json({
+      agendaName: offer.agendaName || "—",
+      monthlyPayment: offer.payment || 0,
+      term: offer.period || 0,
+      rate: offer.rate || 0,
+      price: offer.price || price
+    });
+
   } catch (err) {
-    console.error("❌ Ошибка расчета:", err);
-    res.status(500).json({ error: err.message });
+    console.error("Ошибка расчета:", err);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
   }
 });
 
-// 🔌 запуск сервера (ВАЖНО для Railway)
+// 🔌 Запуск сервера
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
