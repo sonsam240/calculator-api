@@ -1,12 +1,21 @@
 import express from "express";
 import cors from "cors";
-import fetch from "node-fetch"; // если Node 18+, fetch встроенный, можно убрать
+import fetch from "node-fetch"; // если Node 18+, fetch встроенный
 
 const app = express();
 app.use(express.json());
-app.use(cors());
 
-// Тестовый ЖК, можно менять на реальный
+// 🔹 Настройки CORS
+// Разрешаем Tilda (можно заменить на "*" для теста)
+const corsOptions = {
+  origin: "https://matilda-design-001.tilda.ws",
+  methods: ["GET","POST","OPTIONS"],
+  allowedHeaders: ["Content-Type"]
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
+// 🔹 Константы
 const HOUSING_COMPLEX_UUID = "ed2f3423-a31c-4832-8552-a83d93a63e4b";
 const DVIZH_GRAPHQL_URL = "https://api.dvizh.io/graphql";
 
@@ -20,7 +29,7 @@ app.post("/calculate", async (req, res) => {
   try {
     let { price } = req.body;
 
-    if (!price || isNaN(price)) {
+    if (!price || isNaN(price) || price <= 0) {
       return res.status(400).json({ error: "Введите корректную цену" });
     }
 
