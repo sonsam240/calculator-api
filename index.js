@@ -5,8 +5,7 @@ import fetch from "node-fetch"; // если Node 18+, fetch встроенный
 const app = express();
 app.use(express.json());
 
-// 🔹 Настройки CORS
-// Разрешаем Tilda (можно заменить на "*" для теста)
+// CORS для Tilda
 const corsOptions = {
   origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET","POST","OPTIONS"],
@@ -15,16 +14,16 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-// 🔹 Константы
+// Константы
 const HOUSING_COMPLEX_UUID = "ed2f3423-a31c-4832-8552-a83d93a63e4b";
 const DVIZH_GRAPHQL_URL = "https://api.dvizh.io/graphql";
 
-// 🧪 Проверка сервера
+// Проверка сервера
 app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-// 📊 Минимальный ипотечный расчет
+// Минимальный ипотечный расчет
 app.post("/calculate", async (req, res) => {
   try {
     let { price } = req.body;
@@ -33,7 +32,6 @@ app.post("/calculate", async (req, res) => {
       return res.status(400).json({ error: "Введите корректную цену" });
     }
 
-    // Конвертируем в копейки, если пришло в рублях
     price = Number(price);
 
     const query = `
@@ -52,21 +50,29 @@ app.post("/calculate", async (req, res) => {
       }
     `;
 
-    const response = await fetch(DVIZH_GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
+    // Ловим любые ошибки fetch
+    let data;
+    try {
+      const response = await fetch(DVIZH_GRAPHQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
 
-    const data = await response.json();
+      data = await response.json();
+    } catch (fetchErr) {
+      console.error("Ошибка запроса к Dvizh:", fetchErr);
+      return res.status(502).json({ error: "Не удалось получить данные с Dvizh" });
+    }
 
-    if (!data?.data?.creditCoreGetLowestRateAgendas || data.data.creditCoreGetLowestRateAgendas.length === 0) {
-      return res.status(400).json({ error: "Нет доступных предложений", raw: data });
+    // Проверяем ответ
+    if (!data?.data?.creditCoreGetLowestRateAgendas || !data.data.creditCoreGetLowestRateAgendas.length) {
+      console.warn("Нет доступных предложений", data);
+      return res.status(200).json({ error: "Нет доступных предложений", raw: data });
     }
 
     const offer = data.data.creditCoreGetLowestRateAgendas[0];
 
-    // Возвращаем минимальный платеж и базовую информацию
     res.json({
       agendaName: offer.agendaName || "—",
       monthlyPayment: offer.payment || 0,
@@ -76,12 +82,12 @@ app.post("/calculate", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Ошибка расчета:", err);
+    console.error("Внутренняя ошибка сервера:", err);
     res.status(500).json({ error: "Внутренняя ошибка сервера" });
   }
 });
 
-// 🔌 Запуск сервера
+// Запуск сервера
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
