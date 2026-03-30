@@ -3,55 +3,132 @@ import cors from "cors";
 import dotenv from "dotenv";
 
 dotenv.config();
+
 const app = express();
 app.use(express.json());
 
-// CORS только для Tilda
+// ✅ CORS (чтобы Tilda работала)
 app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"]
 }));
 
+const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
+const EMAIL = process.env.DVIZH_EMAIL;
+const PASSWORD = process.env.DVIZH_PASSWORD;
+
+// 👉 ВАЖНО: ВСТАВИ СЮДА РАБОЧИЙ UUID ПОТОМ
+let HOUSING_COMPLEX_UUID = "REPLACE_ME";
+
+// 🔑 токен
 let jwtToken = "";
 
+// =========================
+// 🔐 Получение токена
+// =========================
 async function getToken() {
-  const query = `
-    mutation {
-      loanOfficer_SignIn(input: {
-        email: "${process.env.DVIZH_EMAIL}",
-        password: "${process.env.DVIZH_PASSWORD}"
-      })
-    }
-  `;
-
   try {
-    const res = await fetch(process.env.GRAPHQL_ENDPOINT, {
+    const query = `
+      mutation {
+        loanOfficer_SignIn(input: {
+          email: "${EMAIL}",
+          password: "${PASSWORD}"
+        })
+      }
+    `;
+
+    const res = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "TildaCalc/1.0"
+      },
+      body: JSON.stringify({ query })
     });
+
     const data = await res.json();
+
     if (data?.data?.loanOfficer_SignIn) {
       jwtToken = data.data.loanOfficer_SignIn;
-      console.log("✅ JWT token получен");
+      console.log("✅ TOKEN OK");
+    } else {
+      console.error("❌ TOKEN ERROR", data);
     }
+
   } catch (err) {
-    console.error("❌ Ошибка получения токена:", err);
+    console.error("❌ TOKEN REQUEST ERROR", err);
   }
 }
 
-// Обновление токена
+// автообновление токена
 setInterval(getToken, 1000 * 60 * 10);
 getToken();
 
+// =========================
+// 🧪 Проверка
+// =========================
+app.get("/", (req, res) => {
+  res.send("API WORKS");
+});
+
+// =========================
+// 🔍 ПОЛУЧИТЬ ЖК (ВАЖНО)
+// =========================
+app.get("/complexes", async (req, res) => {
+  try {
+    const query = `
+      query {
+        getHousingComplex(
+          limit: 10
+          offset: 0
+        ) {
+          collection {
+            uuid
+            name
+          }
+        }
+      }
+    `;
+
+    const response = await fetch(GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + jwtToken
+      },
+      body: JSON.stringify({ query })
+    });
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (err) {
+    res.status(500).json({ error: "Ошибка получения ЖК" });
+  }
+});
+
+// =========================
+// 📊 КАЛЬКУЛЯТОР
+// =========================
 app.post("/calculate", async (req, res) => {
   try {
-    if (!jwtToken) await getToken();
+    let { price } = req.body;
 
-    const { price } = req.body;
+    if (!price || isNaN(price)) {
+      return res.status(400).json({ error: "Неверная цена" });
+    }
+
+    if (HOUSING_COMPLEX_UUID === "REPLACE_ME") {
+      return res.json({
+        error: "Сначала получи UUID через /complexes"
+      });
+    }
+
     const query = `
       query {
         creditCoreGetLowestRateAgendas(
-          housingComplexUuid: "ed2f3423-a31c-4832-8552-a83d93a63e4b",
+          housingComplexUuid: "${HOUSING_COMPLEX_UUID}",
           prices: [${price}]
         ) {
           agendaName
@@ -62,7 +139,7 @@ app.post("/calculate", async (req, res) => {
       }
     `;
 
-    const response = await fetch(process.env.GRAPHQL_ENDPOINT, {
+    const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -72,20 +149,34 @@ app.post("/calculate", async (req, res) => {
     });
 
     const data = await response.json();
+
     const offer = data?.data?.creditCoreGetLowestRateAgendas?.[0];
 
-    if (!offer) return res.status(400).json({ error: "Нет предложений", raw: data });
+    if (!offer) {
+      return res.json({
+        error: "Нет предложений",
+        debug: data
+      });
+    }
 
     res.json({
-      agendaName: offer.agendaName,
       monthlyPayment: offer.payment,
       term: offer.period,
       rate: offer.rate,
+      agendaName: offer.agendaName
     });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Ошибка с DVIZH" });
+    console.error("❌ CALC ERROR", err);
+    res.status(500).json({ error: "Ошибка сервера" });
   }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("🚀 Server running"));
+// =========================
+// 🚀 СТАРТ
+// =========================
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log("🚀 SERVER STARTED");
+});
