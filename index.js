@@ -1,7 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import fetch from "node-fetch"; // если используешь Node 22+, fetch уже встроен, можно убрать этот импорт
 
 dotenv.config();
 
@@ -55,8 +54,10 @@ async function ensureToken() {
 // 🚀 Получаем токен при старте
 getToken();
 
-// 💡 Обновляем токен каждые 10 минут
-setInterval(getToken, 1000 * 60 * 10);
+// 💡 обновляем токен каждые 10 минут
+setInterval(() => {
+  getToken();
+}, 1000 * 60 * 10);
 
 // 🧪 Проверка сервера
 app.get("/", (req, res) => {
@@ -68,10 +69,6 @@ app.post("/calculate", async (req, res) => {
   await ensureToken();
 
   const { price, term } = req.body;
-
-  if (!price || !term || isNaN(price) || isNaN(term)) {
-    return res.status(400).json({ error: "Некорректные входные данные" });
-  }
 
   const query = `
     query {
@@ -90,7 +87,7 @@ app.post("/calculate", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${jwtToken}`, // ✔ исправлено
+        "Authorization": "Bearer " + jwtToken,
         "User-Agent": "TildaCalculator/1.0"
       },
       body: JSON.stringify({ query })
@@ -98,6 +95,7 @@ app.post("/calculate", async (req, res) => {
 
     const data = await response.json();
 
+    // защита от кривого ответа API
     if (!data?.data?.calculateMortgage) {
       return res.status(400).json({
         error: "Ошибка расчета",
@@ -112,8 +110,9 @@ app.post("/calculate", async (req, res) => {
   }
 });
 
-// 🔌 запуск сервера (Railway / локально)
+// 🔌 запуск сервера (ВАЖНО для Railway)
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
