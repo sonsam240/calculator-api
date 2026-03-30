@@ -1,90 +1,91 @@
 import express from "express";
 import cors from "cors";
+import dotenv from "dotenv";
 
+dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🔹 Настройка CORS для Tilda
-const corsOptions = {
+// CORS только для Tilda
+app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
-  credentials: true,
-};
+}));
 
-app.use(cors(corsOptions));
+let jwtToken = "";
 
-// 🔹 Константы
-const HOUSING_COMPLEX_UUID = "ed2f3423-a31c-4832-8552-a83d93a63e4b";
-const DVIZH_GRAPHQL_URL = "https://api.dvizh.io/graphql";
+async function getToken() {
+  const query = `
+    mutation {
+      loanOfficer_SignIn(input: {
+        email: "${process.env.DVIZH_EMAIL}",
+        password: "${process.env.DVIZH_PASSWORD}"
+      })
+    }
+  `;
 
-// 🧪 Проверка сервера
-app.get("/", (req, res) => {
-  res.send("API WORKS");
-});
+  try {
+    const res = await fetch(process.env.GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const data = await res.json();
+    if (data?.data?.loanOfficer_SignIn) {
+      jwtToken = data.data.loanOfficer_SignIn;
+      console.log("✅ JWT token получен");
+    }
+  } catch (err) {
+    console.error("❌ Ошибка получения токена:", err);
+  }
+}
 
-// 📊 Минимальный ипотечный расчет
+// Обновление токена
+setInterval(getToken, 1000 * 60 * 10);
+getToken();
+
 app.post("/calculate", async (req, res) => {
   try {
-    let { price } = req.body;
+    if (!jwtToken) await getToken();
 
-    if (!price || isNaN(price) || price <= 0) {
-      return res.status(400).json({ error: "Введите корректную цену" });
-    }
-
-    price = Number(price);
-
+    const { price } = req.body;
     const query = `
       query {
         creditCoreGetLowestRateAgendas(
-          housingComplexUuid: "${HOUSING_COMPLEX_UUID}",
+          housingComplexUuid: "ed2f3423-a31c-4832-8552-a83d93a63e4b",
           prices: [${price}]
         ) {
-          agendaId
           agendaName
-          period
           payment
+          period
           rate
-          price
         }
       }
     `;
 
-    let data;
-    try {
-      const response = await fetch(DVIZH_GRAPHQL_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      });
-      data = await response.json();
-    } catch (fetchErr) {
-      console.error("Ошибка запроса к Dvizh:", fetchErr);
-      return res.status(502).json({ error: "Не удалось получить данные с Dvizh" });
-    }
-
-    if (!data?.data?.creditCoreGetLowestRateAgendas || !data.data.creditCoreGetLowestRateAgendas.length) {
-      return res.status(200).json({ error: "Нет доступных предложений", raw: data });
-    }
-
-    const offer = data.data.creditCoreGetLowestRateAgendas[0];
-
-    res.json({
-      agendaName: offer.agendaName || "—",
-      monthlyPayment: offer.payment || 0,
-      term: offer.period || 0,
-      rate: offer.rate || 0,
-      price: offer.price || price
+    const response = await fetch(process.env.GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + jwtToken
+      },
+      body: JSON.stringify({ query })
     });
 
+    const data = await response.json();
+    const offer = data?.data?.creditCoreGetLowestRateAgendas?.[0];
+
+    if (!offer) return res.status(400).json({ error: "Нет предложений", raw: data });
+
+    res.json({
+      agendaName: offer.agendaName,
+      monthlyPayment: offer.payment,
+      term: offer.period,
+      rate: offer.rate,
+    });
   } catch (err) {
-    console.error("Внутренняя ошибка сервера:", err);
-    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+    console.error(err);
+    res.status(500).json({ error: "Ошибка с DVIZH" });
   }
 });
 
-// 🔌 Запуск сервера
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(process.env.PORT || 3000, () => console.log("🚀 Server running"));
