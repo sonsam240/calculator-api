@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// ✅ CORS для Tilda
+// CORS для Tilda
 app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET", "POST"],
@@ -16,16 +16,12 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-// =========================
-// 🧪 Проверка
-// =========================
+// Проверка
 app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-// =========================
-// 📊 КАЛЬКУЛЯТОР (ГЛАВНОЕ)
-// =========================
+// Калькулятор
 app.post("/calculate", async (req, res) => {
   try {
     let { price } = req.body;
@@ -34,9 +30,8 @@ app.post("/calculate", async (req, res) => {
       return res.status(400).json({ error: "Неверная цена" });
     }
 
-    // 🔥 базовые параметры (можешь менять)
-    const initialPayment = Math.floor(price * 0.2); // 20%
     const loanPeriod = 30; // лет
+    const initialPayment = Math.floor(price * 0.2); // 20%
 
     const query = `
       query {
@@ -69,7 +64,6 @@ app.post("/calculate", async (req, res) => {
     });
 
     const data = await response.json();
-
     const offer = data?.data?.getLoanOffer?.[0];
 
     if (!offer) {
@@ -83,18 +77,17 @@ app.post("/calculate", async (req, res) => {
       program: offer.name,
       bank: offer.bankName,
       rate: offer.rate,
-      monthlyPayment: offer.paymentDetails?.[0]?.payment || 0
+      monthlyPayment: offer.paymentDetails?.[0]?.payment || 0,
+      term: loanPeriod * 12 // 👈 фикс срока
     });
 
   } catch (err) {
-    console.error("❌ ERROR:", err);
+    console.error("❌ SERVER ERROR:", err);
     res.status(500).json({ error: "Ошибка сервера" });
   }
 });
 
-// =========================
-// 🚀 СТАРТ
-// =========================
+// старт
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
