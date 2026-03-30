@@ -4,17 +4,15 @@ import cors from "cors";
 const app = express();
 app.use(express.json());
 
-// 🔹 CORS для Tilda
+// 🔹 Настройка CORS для Tilda
 const corsOptions = {
-  origin: "https://matilda-design-001.tilda.ws", // разрешаем Tilda
+  origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"],
-  credentials: true
+  credentials: true,
 };
 
 app.use(cors(corsOptions));
-// Обработка preflight-запросов
-app.options("*", cors(corsOptions));
 
 // 🔹 Константы
 const HOUSING_COMPLEX_UUID = "ed2f3423-a31c-4832-8552-a83d93a63e4b";
@@ -52,7 +50,6 @@ app.post("/calculate", async (req, res) => {
       }
     `;
 
-    // 🔹 fetch с обработкой ошибок
     let data;
     try {
       const response = await fetch(DVIZH_GRAPHQL_URL, {
@@ -66,15 +63,12 @@ app.post("/calculate", async (req, res) => {
       return res.status(502).json({ error: "Не удалось получить данные с Dvizh" });
     }
 
-    // 🔹 Проверка ответа
     if (!data?.data?.creditCoreGetLowestRateAgendas || !data.data.creditCoreGetLowestRateAgendas.length) {
-      console.warn("Нет доступных предложений", data);
       return res.status(200).json({ error: "Нет доступных предложений", raw: data });
     }
 
     const offer = data.data.creditCoreGetLowestRateAgendas[0];
 
-    // 🔹 Возвращаем клиенту минимальный платеж
     res.json({
       agendaName: offer.agendaName || "—",
       monthlyPayment: offer.payment || 0,
