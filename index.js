@@ -24,10 +24,14 @@ app.get("/", (req, res) => {
 // калькулятор
 app.post("/calculate", async (req, res) => {
   try {
-    let { price } = req.body;
+    let { price, complex } = req.body;
 
     if (!price || isNaN(price)) {
       return res.status(400).json({ error: "Неверная цена" });
+    }
+
+    if (!complex) {
+      return res.status(400).json({ error: "Не выбран ЖК" });
     }
 
     const loanPeriod = 30; // лет
@@ -39,7 +43,7 @@ app.post("/calculate", async (req, res) => {
           loanPeriod: ${loanPeriod},
           loanTypes: PRIMARY,
           propertyTypes: FLAT,
-          housingComplexUuid: "ed2f5053-a52c-4398-9226-a57d05a34e9b",
+          housingComplexUuid: "${complex}",
           initialPayment: ${initialPayment},
           cost: ${price},
           mortgageType: STANDARD,
@@ -74,7 +78,7 @@ app.post("/calculate", async (req, res) => {
       });
     }
 
-    // 👉 берём топ-3 предложения
+    // топ-3 предложения
     const result = offers.slice(0, 3).map(o => ({
       program: o.name,
       bank: o.bankName,
