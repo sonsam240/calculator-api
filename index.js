@@ -24,8 +24,14 @@ app.get("/", (req, res) => {
 // калькулятор
 app.post("/calculate", async (req, res) => {
   try {
-    let { price, complex } = req.body;
+    let {
+      price,
+      complex,
+      initialPayment,
+      loanPeriod
+    } = req.body;
 
+    // --- ВАЛИДАЦИЯ ---
     if (!price || isNaN(price)) {
       return res.status(400).json({ error: "Неверная цена" });
     }
@@ -34,9 +40,21 @@ app.post("/calculate", async (req, res) => {
       return res.status(400).json({ error: "Не выбран ЖК" });
     }
 
-    const loanPeriod = 30; // лет
-    const initialPayment = Math.floor(price * 0.2);
+    // дефолты
+    if (!loanPeriod || isNaN(loanPeriod)) {
+      loanPeriod = 30;
+    }
 
+    if (!initialPayment || isNaN(initialPayment)) {
+      initialPayment = Math.floor(price * 0.2);
+    }
+
+    // защита: взнос не больше цены
+    if (initialPayment > price) {
+      initialPayment = Math.floor(price * 0.9);
+    }
+
+    // --- GRAPHQL ---
     const query = `
       query {
         getLoanOffer(
@@ -47,7 +65,8 @@ app.post("/calculate", async (req, res) => {
           initialPayment: ${initialPayment},
           cost: ${price},
           mortgageType: STANDARD,
-          isRfCitizen: true
+          isRfCitizen: true,
+          sort: PAYMENT_ASC
         ) {
           name
           bankName
@@ -78,8 +97,15 @@ app.post("/calculate", async (req, res) => {
       });
     }
 
-    // топ-3 предложения
-    const result = offers.slice(0, 3).map(o => ({
+    // --- СОРТИРОВКА (доп защита) ---
+    const sorted = offers.sort((a, b) => {
+      const aPay = a.paymentDetails?.[0]?.payment || 0;
+      const bPay = b.paymentDetails?.[0]?.payment || 0;
+      return aPay - bPay;
+    });
+
+    // --- ТОП 3 ---
+    const result = sorted.slice(0, 3).map(o => ({
       program: o.name,
       bank: o.bankName,
       rate: o.rate,
