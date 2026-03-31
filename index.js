@@ -35,7 +35,7 @@ app.post("/calculate", async (req, res) => {
       return res.status(400).json({ error: "Не выбран ЖК" });
     }
 
-    // дефолты (как было, но гибко)
+    // дефолты
     if (!loanPeriod || isNaN(loanPeriod)) {
       loanPeriod = 30;
     }
@@ -44,11 +44,12 @@ app.post("/calculate", async (req, res) => {
       initialPayment = Math.floor(price * 0.2);
     }
 
-    // защита от кривых данных
+    // защита
     if (initialPayment >= price) {
       initialPayment = Math.floor(price * 0.2);
     }
 
+    // --- GRAPHQL ---
     const query = `
       query {
         getLoanOffer(
@@ -90,23 +91,34 @@ app.post("/calculate", async (req, res) => {
       });
     }
 
-    // сортировка (как было на фронте, но надежнее тут)
+    // --- СОРТИРОВКА ---
     const sorted = offers.sort((a, b) => {
       const aPay = a.paymentDetails?.[0]?.payment || 0;
       const bPay = b.paymentDetails?.[0]?.payment || 0;
       return aPay - bPay;
     });
 
-    // топ-3 предложения
-    const result = sorted.slice(0, 3).map(o => ({
-      program: o.name,
-      bank: o.bankName,
-      rate: o.rate,
-      monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
-      term: loanPeriod * 12
-    }));
+    // --- УНИКАЛЬНЫЕ БАНКИ ---
+    const unique = [];
+    const seenBanks = new Set();
 
-    res.json(result);
+    for (let o of sorted) {
+      if (!seenBanks.has(o.bankName)) {
+        seenBanks.add(o.bankName);
+
+        unique.push({
+          program: o.name,
+          bank: o.bankName,
+          rate: o.rate,
+          monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
+          term: loanPeriod * 12
+        });
+      }
+
+      if (unique.length === 3) break;
+    }
+
+    res.json(unique);
 
   } catch (err) {
     console.error("❌ SERVER ERROR:", err);
