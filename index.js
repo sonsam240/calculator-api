@@ -54,7 +54,7 @@ app.get("/offer-base", async (req, res) => {
 
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ query })
     });
 
@@ -73,7 +73,6 @@ app.get("/offer-base", async (req, res) => {
     for (let o of sorted) {
       if (!seen.has(o.bankName)) {
         seen.add(o.bankName);
-
         unique.push({
           bank: o.bankName,
           rate: o.rate,
@@ -84,7 +83,6 @@ app.get("/offer-base", async (req, res) => {
     }
 
     res.json(unique);
-
   } catch (err) {
     console.error("❌ BASE ERROR:", err);
     res.status(500).json({ error: "Ошибка сервера" });
@@ -92,22 +90,19 @@ app.get("/offer-base", async (req, res) => {
 });
 
 // =====================================================
-// 🔽 КАЛЬКУЛЯТОР (ПО ПАРАМЕТРАМ)
+// 🔽 КАЛЬКУЛЯТОР (ПО ПАРАМЕТРАМ И ФИЛЬТРАМ)
 // =====================================================
 app.post("/calculate", async (req, res) => {
   try {
-    let { price, complex, initialPayment, loanPeriod, fsk, child, it, military } = req.body;
+    let { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, mortgageFSK } = req.body;
 
     // --- ВАЛИДАЦИЯ ---
-    price = Number(price) || 5000000 * 100;
-    loanPeriod = Number(loanPeriod) || 30;
-    initialPayment = Number(initialPayment) || Math.floor(price * 0.2);
+    if (!price || isNaN(price)) return res.status(400).json({ error: "Неверная цена" });
+    if (!complex) return res.status(400).json({ error: "Не выбран ЖК" });
+    if (!loanPeriod || isNaN(loanPeriod)) loanPeriod = 30;
+    if (!initialPayment || isNaN(initialPayment)) initialPayment = Math.floor(price * 0.2);
+    if (initialPayment >= price) initialPayment = Math.floor(price * 0.2);
 
-    if (initialPayment >= price) {
-      initialPayment = Math.floor(price * 0.2);
-    }
-
-    // формируем GraphQL query с фильтрами
     const query = `
       query {
         getLoanOffer(
@@ -117,10 +112,14 @@ app.post("/calculate", async (req, res) => {
           housingComplexUuid: "${complex}",
           initialPayment: ${initialPayment},
           cost: ${price},
-          mortgageType: ${military ? "MILITARY" : "STANDARD"},
+          mortgageType: STANDARD,
           isRfCitizen: true,
-          isSubsidizedByDeveloper: ${fsk ? true : false},
-          maternalCapital: ${child ? 500000 : 0}
+          filters: {
+            hasChild: ${hasChild || false},
+            isIT: ${isIT || false},
+            isMilitary: ${isMilitary || false},
+            mortgageFSK: ${mortgageFSK || false}
+          }
         ) {
           name
           bankName
@@ -134,7 +133,7 @@ app.post("/calculate", async (req, res) => {
 
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ query })
     });
 
@@ -142,10 +141,7 @@ app.post("/calculate", async (req, res) => {
     const offers = data?.data?.getLoanOffer;
 
     if (!offers || offers.length === 0) {
-      return res.json({
-        error: "Нет предложений",
-        debug: data
-      });
+      return res.json({ error: "Нет предложений", debug: data });
     }
 
     // сортировка по платежу
@@ -162,7 +158,6 @@ app.post("/calculate", async (req, res) => {
     for (let o of sorted) {
       if (!seenBanks.has(o.bankName)) {
         seenBanks.add(o.bankName);
-
         unique.push({
           program: o.name,
           bank: o.bankName,
@@ -175,7 +170,6 @@ app.post("/calculate", async (req, res) => {
     }
 
     res.json(unique);
-
   } catch (err) {
     console.error("❌ CALC ERROR:", err);
     res.status(500).json({ error: "Ошибка сервера" });
