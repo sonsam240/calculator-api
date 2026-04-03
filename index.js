@@ -15,7 +15,7 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API DVIZH-READY v9 ✅"));
+app.get("/", (req, res) => res.send("API DVIZH-FAR-EAST ✅"));
 
 // 1. 🔝 ТОП ПРЕДЛОЖЕНИЯ
 app.get("/offer-base", async (req, res) => {
@@ -37,30 +37,34 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (БЕЗ ФСК)
+// 2. 🔽 КАЛЬКУЛЯТОР (С ИСПОЛЬЗОВАНИЕМ ПРАВИЛЬНЫХ ENUMS)
 app.post("/calculate", async (req, res) => {
   try {
     const { 
       price, complex, initialPayment, loanPeriod, 
       hasChild, isIT, isMilitary, 
-      isTwoDocs, useMatCapital 
+      isTwoDocs, useMatCapital, hasCertificate 
     } = req.body;
 
     const cost = parseInt(price);
     const initial = parseInt(initialPayment);
     const period = parseInt(loanPeriod);
 
+    // Подготовка типов для запроса
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
     if (isMilitary) typesToQuery.push("MILITARY");
+    
+    // Если ничего не выбрано или "По двум документам" — ищем по STANDARD
     if (typesToQuery.length === 0 || isTwoDocs) typesToQuery.push("STANDARD");
+    
     typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
-      // proofOfIncome: TWO_DOCUMENTS (исправлено на основе прошлых логов)
-      const proofAttr = isTwoDocs ? "proofOfIncome: TWO_DOCUMENTS," : "";
+      const proofAttr = isTwoDocs ? "proofOfIncome: no_needed," : "";
       const matCapAttr = useMatCapital ? "maternalCapital: 83300000," : "";
+      const certAttr = hasCertificate ? "subsidy: 60000000," : "";
 
       const query = `
         query {
@@ -75,6 +79,7 @@ app.post("/calculate", async (req, res) => {
             mortgageType: ${mType},
             ${proofAttr}
             ${matCapAttr}
+            ${certAttr}
           ) {
             name bankName rate paymentDetails { payment }
           }
@@ -83,7 +88,7 @@ app.post("/calculate", async (req, res) => {
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
         const json = await resp.json();
-        if (json.errors) console.error(`Ошибка API (${mType}):`, json.errors[0].message);
+        if (json.errors) console.error(`Ошибка для ${mType}:`, json.errors[0].message);
         return json?.data?.getLoanOffer || [];
       } catch (e) { return []; }
     };
@@ -105,18 +110,19 @@ app.post("/calculate", async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// 3. 📋 ВСЕ ПРОГРАММЫ
+// 3. 📋 ВСЕ ПРОГРАММЫ (ТЕПЕРЬ С ДАЛЬНЕВОСТОЧНОЙ ИПОТЕКОЙ)
 app.get("/all-programs", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
+    
     const programsDef = [
       { id: "FAMILY", name: "Семейная ипотека", init: 20, attr: "" },
       { id: "MILITARY", name: "Военная ипотека", init: 15, attr: "" },
-      { id: "STANDARD", name: "Ипотека по двум документам", init: 20, attr: "proofOfIncome: TWO_DOCUMENTS," },
-      { id: "STANDARD", name: "Субсидированная ипотека", init: 15, attr: "" },
+      { id: "STANDARD", name: "Ипотека по двум документам", init: 20, attr: "proofOfIncome: no_needed," },
+      { id: "GOVERNMENT_SUPPORT", name: "Субсидированная ипотека", init: 15, attr: "" },
       { id: "STANDARD", name: "Стандартная ипотека", init: 20, attr: "" },
       { id: "IT", name: "IT ипотека", init: 20, attr: "" },
-      { id: "STANDARD", name: "Коммерческая ипотека", init: 30, attr: "" }
+      { id: "FAR_EAST", name: "Дальневосточная ипотека", init: 20, attr: "" }
     ];
 
     const results = await Promise.all(programsDef.map(async (p) => {
@@ -125,16 +131,21 @@ app.get("/all-programs", async (req, res) => {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
         const json = await resp.json();
         const offers = json?.data?.getLoanOffer || [];
-        let rate = offers.length ? Math.min(...offers.map(o => o.rate)) : 18.5;
-        if (p.name.includes("Субсидированная") && rate > 10) rate = 8.8;
-        if (p.name.includes("Коммерческая")) rate = 21.0;
-        if (p.name.includes("Военная") && rate > 15) rate = 14.2;
+        
+        // Ставим базовую ставку, если вдруг API не нашло предложений
+        let rate = offers.length ? Math.min(...offers.map(o => o.rate)) : 18.9;
+        
+        // Специальные ставки для льготных программ
+        if (p.name.includes("Субсидированная") && rate > 10) rate = 8.5;
+        if (p.name.includes("Дальневосточная") && rate > 5) rate = 2.0;
+        
         return { name: p.name, rate: rate, initial: p.init, term: 30 };
       } catch { return null; }
     }));
+
     res.json(results.filter(r => r !== null));
   } catch (err) { res.json([]); }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 API RUNNING (NO FSK)`));
+app.listen(PORT, () => console.log(`🚀 API SYNCED: FAR_EAST ADDED`));
