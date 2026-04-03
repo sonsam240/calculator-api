@@ -15,13 +15,13 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE STABLE v6 ✅"));
+app.get("/", (req, res) => res.send("API CONFIGURED BY SCHEMA ✅"));
 
 // 1. 🔝 ТОП ПРЕДЛОЖЕНИЯ
 app.get("/offer-base", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
-    const query = `query { getLoanOffer(loanPeriod: 30, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: STANDARD) { bankName rate paymentDetails { payment } } }`;
+    const query = `query { getLoanOffer(loanPeriod: 30, housingComplexUuid: "${complex}", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: STANDARD) { bankName rate paymentDetails { payment } } }`;
     const response = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
     const data = await response.json();
     const offers = data?.data?.getLoanOffer || [];
@@ -37,7 +37,7 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (БЕЗ ОШИБОЧНОГО БЛОКА FILTERS)
+// 2. 🔽 КАЛЬКУЛЯТОР (СТРОГО ПО АРГУМЕНТАМ ИЗ СКРИНШОТА)
 app.post("/calculate", async (req, res) => {
   try {
     const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, isTwoDocs } = req.body;
@@ -46,27 +46,29 @@ app.post("/calculate", async (req, res) => {
     const initial = parseInt(initialPayment);
     const period = parseInt(loanPeriod);
 
-    // Собираем типы программ для запроса
+    // Собираем типы программ для мульти-запроса
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
     if (isMilitary) typesToQuery.push("MILITARY");
-    if (isTwoDocs || typesToQuery.length === 0) typesToQuery.push("STANDARD");
+    if (typesToQuery.length === 0) typesToQuery.push("STANDARD");
 
     typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
-      // Прямой запрос БЕЗ блока filters, чтобы избежать ошибки 400
+      // ПАРАМЕТРЫ СТРОГО ИЗ ВАШЕГО СКРИНШОТА:
+      // proofOfIncome: если галочка "2 документа", ставим BY_TWO_DOCUMENTS
+      const proofParam = isTwoDocs ? "proofOfIncome: BY_TWO_DOCUMENTS," : "";
+      
       const query = `
         query {
           getLoanOffer(
             loanPeriod: ${period},
-            loanTypes: [PRIMARY],
-            propertyTypes: [FLAT],
             housingComplexUuid: "${complex}",
             initialPayment: ${initial},
             cost: ${cost},
             isRfCitizen: true,
+            ${proofParam}
             mortgageType: ${mType}
           ) {
             name bankName rate paymentDetails { payment }
@@ -104,7 +106,10 @@ app.post("/calculate", async (req, res) => {
     });
 
     res.json(unique.slice(0, 20));
-  } catch (err) { res.status(500).json([]); }
+  } catch (err) {
+    console.error("CALC ERROR:", err);
+    res.status(500).json([]);
+  }
 });
 
 // 3. 📋 ВСЕ ПРОГРАММЫ
@@ -122,7 +127,10 @@ app.get("/all-programs", async (req, res) => {
     ];
 
     const results = await Promise.all(programsDef.map(async (p) => {
-      const q = `query { getLoanOffer(loanPeriod: 30, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${p.id}) { rate } }`;
+      // Если это "По двум документам", добавляем аргумент proofOfIncome
+      const proofAttr = p.name === "Ипотека по двум документам" ? "proofOfIncome: BY_TWO_DOCUMENTS," : "";
+      
+      const q = `query { getLoanOffer(loanPeriod: 30, housingComplexUuid: "${complex}", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, ${proofAttr} mortgageType: ${p.id}) { rate } }`;
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
         const json = await resp.json();
@@ -138,4 +146,4 @@ app.get("/all-programs", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 STABLE API READY`));
+app.listen(PORT, () => console.log(`🚀 API READY BY SCHEMA`));
