@@ -15,13 +15,13 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API DVIZH-FAR-EAST ✅"));
+app.get("/", (req, res) => res.send("API DVIZH-ULTIMATE v11 ✅"));
 
 // 1. 🔝 ТОП ПРЕДЛОЖЕНИЯ
 app.get("/offer-base", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
-    const query = `query { getLoanOffer(loanPeriod: 30, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: STANDARD) { bankName rate paymentDetails { payment } } }`;
+    const query = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: STANDARD) { bankName rate paymentDetails { payment } } }`;
     const response = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
     const data = await response.json();
     const offers = data?.data?.getLoanOffer || [];
@@ -37,39 +37,56 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (С ИСПОЛЬЗОВАНИЕМ ПРАВИЛЬНЫХ ENUMS)
+// 2. 🔽 КАЛЬКУЛЯТОР (ПОЛНАЯ СИНХРОНИЗАЦИЯ С ENUMS)
 app.post("/calculate", async (req, res) => {
   try {
     const { 
       price, complex, initialPayment, loanPeriod, 
-      hasChild, isIT, isMilitary, 
-      isTwoDocs, useMatCapital, hasCertificate 
+      hasChild, isIT, isMilitary, hasCertificate,
+      isTwoDocs, useMatCapital 
     } = req.body;
 
     const cost = parseInt(price);
     const initial = parseInt(initialPayment);
     const period = parseInt(loanPeriod);
 
-    // Подготовка типов для запроса
+    // Собираем типы программ для запроса
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
-    if (isMilitary) typesToQuery.push("MILITARY");
+    if (isMilitary) {
+      typesToQuery.push("MILITARY");
+      typesToQuery.push("STANDARD"); // Резерв
+    }
     
-    // Если ничего не выбрано или "По двум документам" — ищем по STANDARD
-    if (typesToQuery.length === 0 || isTwoDocs) typesToQuery.push("STANDARD");
-    
+    // Если есть жилищный сертификат - обязательно ищем GOVERNMENT_SUPPORT (Господдержка)
+    if (hasCertificate) {
+      typesToQuery.push("GOVERNMENT_SUPPORT");
+    }
+
+    if (typesToQuery.length === 0 || isTwoDocs) {
+      typesToQuery.push("STANDARD");
+    }
+
     typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
+      // ИСПОЛЬЗУЕМ ТОЧНЫЕ ИМЕНА ИЗ ВАШЕГО SANDBOX:
+      
+      // По двум документам = no_needed
       const proofAttr = isTwoDocs ? "proofOfIncome: no_needed," : "";
+      
+      // Жилищный сертификат = saveInitialPayment (600 000 руб)
+      const certAttr = hasCertificate ? "subsidyType: saveInitialPayment, subsidy: 60000000," : "";
+      
+      // Материнский капитал = 833 000 руб
       const matCapAttr = useMatCapital ? "maternalCapital: 83300000," : "";
-      const certAttr = hasCertificate ? "subsidy: 60000000," : "";
 
       const query = `
         query {
           getLoanOffer(
             loanPeriod: ${period},
+            agendaType: primary_housing,
             loanTypes: [PRIMARY],
             propertyTypes: [FLAT],
             housingComplexUuid: "${complex}",
@@ -78,8 +95,8 @@ app.post("/calculate", async (req, res) => {
             isRfCitizen: true,
             mortgageType: ${mType},
             ${proofAttr}
-            ${matCapAttr}
             ${certAttr}
+            ${matCapAttr}
           ) {
             name bankName rate paymentDetails { payment }
           }
@@ -88,7 +105,10 @@ app.post("/calculate", async (req, res) => {
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
         const json = await resp.json();
+        
+        // Если ошибка — увидим в Railway (поможет, если какой-то Enum не сработал)
         if (json.errors) console.error(`Ошибка для ${mType}:`, json.errors[0].message);
+        
         return json?.data?.getLoanOffer || [];
       } catch (e) { return []; }
     };
@@ -110,11 +130,10 @@ app.post("/calculate", async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// 3. 📋 ВСЕ ПРОГРАММЫ (ТЕПЕРЬ С ДАЛЬНЕВОСТОЧНОЙ ИПОТЕКОЙ)
+// 3. 📋 ВСЕ ПРОГРАММЫ
 app.get("/all-programs", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
-    
     const programsDef = [
       { id: "FAMILY", name: "Семейная ипотека", init: 20, attr: "" },
       { id: "MILITARY", name: "Военная ипотека", init: 15, attr: "" },
@@ -126,26 +145,20 @@ app.get("/all-programs", async (req, res) => {
     ];
 
     const results = await Promise.all(programsDef.map(async (p) => {
-      const q = `query { getLoanOffer(loanPeriod: 30, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${p.id}, ${p.attr}) { rate } }`;
+      const q = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${p.id}, ${p.attr}) { rate } }`;
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
         const json = await resp.json();
         const offers = json?.data?.getLoanOffer || [];
-        
-        // Ставим базовую ставку, если вдруг API не нашло предложений
         let rate = offers.length ? Math.min(...offers.map(o => o.rate)) : 18.9;
-        
-        // Специальные ставки для льготных программ
         if (p.name.includes("Субсидированная") && rate > 10) rate = 8.5;
         if (p.name.includes("Дальневосточная") && rate > 5) rate = 2.0;
-        
         return { name: p.name, rate: rate, initial: p.init, term: 30 };
       } catch { return null; }
     }));
-
     res.json(results.filter(r => r !== null));
   } catch (err) { res.json([]); }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 API SYNCED: FAR_EAST ADDED`));
+app.listen(PORT, () => console.log(`🚀 API FINAL SYNC SUCCESSFUL`));
