@@ -15,17 +15,23 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE FULL SYSTEM v12 ✅"));
+app.get("/", (req, res) => res.send("API MORTGAGE v13 ✅"));
 
-// 1. 🔝 ТОП ПРЕДЛОЖЕНИЯ (Для блока над калькулятором)
+// 1. 🔝 НАДЕЖНЫЙ РОУТ ДЛЯ ТОП-ПРЕДЛОЖЕНИЙ
 app.get("/offer-base", async (req, res) => {
-  try {
-    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
-    // Ищем Господдержку, так как там сейчас самые интересные предложения
-    const query = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: GOVERNMENT_SUPPORT) { bankName rate paymentDetails { payment } } }`;
+  const fetchTop = async (mType) => {
+    const query = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: ${mType}) { bankName rate paymentDetails { payment } } }`;
     const response = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
     const data = await response.json();
-    const offers = data?.data?.getLoanOffer || [];
+    return data?.data?.getLoanOffer || [];
+  };
+
+  try {
+    // Пробуем сначала Господдержку (самые низкие ставки)
+    let offers = await fetchTop("GOVERNMENT_SUPPORT");
+    // Если пусто — пробуем Стандарт
+    if (offers.length === 0) offers = await fetchTop("STANDARD");
+
     const unique = [];
     const seen = new Set();
     offers.sort((a, b) => a.rate - b.rate).forEach(o => {
@@ -38,58 +44,25 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (МУЛЬТИ-ФИЛЬТР + 20 РЕЗУЛЬТАТОВ)
+// 2. 🔽 КАЛЬКУЛЯТОР (МУЛЬТИ-ФИЛЬТР)
 app.post("/calculate", async (req, res) => {
   try {
-    const { 
-      price, complex, initialPayment, loanPeriod, 
-      hasChild, isIT, isMilitary, hasCertificate,
-      isTwoDocs, useMatCapital 
-    } = req.body;
-
-    const cost = parseInt(price);
-    const initial = parseInt(initialPayment);
-    const period = parseInt(loanPeriod);
+    const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, hasCertificate, isTwoDocs, useMatCapital } = req.body;
+    const cost = parseInt(price), initial = parseInt(initialPayment), period = parseInt(loanPeriod);
 
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
     if (isMilitary) typesToQuery.push("MILITARY");
-    
-    // Если выбран сертификат или ничего не выбрано - расширяем поиск
-    if (hasCertificate || typesToQuery.length === 0) {
-      typesToQuery.push("STANDARD");
-      typesToQuery.push("GOVERNMENT_SUPPORT");
-    }
+    if (hasCertificate || typesToQuery.length === 0) { typesToQuery.push("STANDARD"); typesToQuery.push("GOVERNMENT_SUPPORT"); }
     if (isTwoDocs) typesToQuery.push("STANDARD");
-
     typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
       const proofAttr = isTwoDocs ? "proofOfIncome: no_needed," : "";
       const matCapAttr = useMatCapital ? "maternalCapital: 83300000," : "";
       const certAttr = hasCertificate ? "subsidyType: saveInitialPayment, subsidy: 60000000," : "";
-
-      const query = `
-        query {
-          getLoanOffer(
-            loanPeriod: ${period},
-            agendaType: primary_housing,
-            loanTypes: [PRIMARY],
-            propertyTypes: [FLAT],
-            housingComplexUuid: "${complex}",
-            initialPayment: ${initial},
-            cost: ${cost},
-            isRfCitizen: true,
-            mortgageType: ${mType},
-            ${proofAttr}
-            ${matCapAttr}
-            ${certAttr}
-          ) {
-            name bankName rate paymentDetails { payment }
-          }
-        }
-      `;
+      const query = `query { getLoanOffer(loanPeriod: ${period}, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: ${initial}, cost: ${cost}, isRfCitizen: true, mortgageType: ${mType}, ${proofAttr} ${matCapAttr} ${certAttr}) { name bankName rate paymentDetails { payment } } }`;
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
         const json = await resp.json();
@@ -112,21 +85,20 @@ app.post("/calculate", async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// 3. 📋 ВСЕ ПРОГРАММЫ (7 ШТУК)
+// 3. 📋 ВСЕ ПРОГРАММЫ
 app.get("/all-programs", async (req, res) => {
   try {
-    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
     const programsDef = [
-      { id: "FAMILY", name: "Семейная ипотека", init: 20, attr: "" },
-      { id: "MILITARY", name: "Военная ипотека", init: 15, attr: "" },
+      { id: "FAMILY", name: "Семейная ипотека", init: 20 },
+      { id: "MILITARY", name: "Военная ипотека", init: 15 },
       { id: "STANDARD", name: "Ипотека по двум документам", init: 20, attr: "proofOfIncome: no_needed," },
-      { id: "GOVERNMENT_SUPPORT", name: "Субсидированная ипотека", init: 15, attr: "" },
-      { id: "STANDARD", name: "Стандартная ипотека", init: 20, attr: "" },
-      { id: "IT", name: "IT ипотека", init: 20, attr: "" },
-      { id: "FAR_EAST", name: "Дальневосточная ипотека", init: 20, attr: "" }
+      { id: "GOVERNMENT_SUPPORT", name: "Субсидированная ипотека", init: 15 },
+      { id: "STANDARD", name: "Стандартная ипотека", init: 20 },
+      { id: "IT", name: "IT ипотека", init: 20 },
+      { id: "FAR_EAST", name: "Дальневосточная ипотека", init: 20 }
     ];
     const results = await Promise.all(programsDef.map(async (p) => {
-      const q = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${p.id}, ${p.attr}) { rate } }`;
+      const q = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${p.id}, ${p.attr || ''}) { rate } }`;
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
         const json = await resp.json();
@@ -141,5 +113,4 @@ app.get("/all-programs", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 API v12 READY`));
+app.listen(process.env.PORT || 3000);
