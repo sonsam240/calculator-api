@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import fetch from "node-fetch"; // если используешь Node.js < 18
 
 dotenv.config();
 
@@ -26,7 +27,7 @@ app.get("/", (req, res) => {
 // =====================================================
 app.get("/offer-base", async (req, res) => {
   try {
-    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2"; // можно менять
+    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
     const price = 5000000 * 100;
     const initialPayment = Math.floor(price * 0.2);
     const loanPeriod = 30;
@@ -45,9 +46,7 @@ app.get("/offer-base", async (req, res) => {
           name
           bankName
           rate
-          paymentDetails {
-            payment
-          }
+          paymentDetails { payment }
         }
       }
     `;
@@ -103,12 +102,6 @@ app.post("/calculate", async (req, res) => {
     if (!initialPayment || isNaN(initialPayment)) initialPayment = Math.floor(price * 0.2);
     if (initialPayment >= price) initialPayment = Math.floor(price * 0.2);
 
-    // приводим фильтры к булевым значениям
-    hasChild = !!hasChild;
-    isIT = !!isIT;
-    isMilitary = !!isMilitary;
-    mortgageFSK = !!mortgageFSK;
-
     const query = `
       query {
         getLoanOffer(
@@ -121,18 +114,16 @@ app.post("/calculate", async (req, res) => {
           mortgageType: STANDARD,
           isRfCitizen: true,
           filters: {
-            hasChild: ${hasChild},
-            isIT: ${isIT},
-            isMilitary: ${isMilitary},
-            mortgageFSK: ${mortgageFSK}
+            hasChild: ${hasChild || false},
+            isIT: ${isIT || false},
+            isMilitary: ${isMilitary || false},
+            mortgageFSK: ${mortgageFSK || false}
           }
         ) {
           name
           bankName
           rate
-          paymentDetails {
-            payment
-          }
+          paymentDetails { payment }
         }
       }
     `;
@@ -147,7 +138,7 @@ app.post("/calculate", async (req, res) => {
     const offers = data?.data?.getLoanOffer;
 
     if (!offers || offers.length === 0) {
-      return res.json({ error: "Нет предложений", debug: data });
+      return res.json([]);
     }
 
     // сортировка по платежу
