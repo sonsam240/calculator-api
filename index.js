@@ -111,7 +111,7 @@ app.post("/calculate", async (req, res) => {
       }
     }
 
-    res.json(unique.slice(0, 6)); // Возвращаем топ-6 предложений
+    res.json(unique.slice(0, 20)); // Возвращаем топ-6 предложений
   } catch (err) {
     console.error("CALC ERROR:", err);
     res.status(500).json([]);
