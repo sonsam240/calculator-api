@@ -8,7 +8,6 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Настройка CORS
 app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET", "POST"],
@@ -17,124 +16,49 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-// Проверка работоспособности
-app.get("/", (req, res) => {
-  res.send("API ипотечного калькулятора работает");
-});
+app.get("/", (req, res) => res.send("API DVIZH-STYLE IS RUNNING"));
 
-// =====================================================
-// 🔝 БАЗОВЫЕ ПРЕДЛОЖЕНИЯ (ОБЫЧНЫЕ СТАВКИ)
-// =====================================================
-app.get("/offer-base", async (req, res) => {
-  try {
-    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2"; // ДНС СИТИ по умолчанию
-    const price = 5000000 * 100;
-    const initialPayment = Math.floor(price * 0.2);
-    const loanPeriod = 30;
-
-    const query = `
-      query {
-        getLoanOffer(
-          loanPeriod: ${loanPeriod},
-          loanTypes: PRIMARY,
-          propertyTypes: FLAT,
-          housingComplexUuid: "${complex}",
-          initialPayment: ${initialPayment},
-          cost: ${price},
-          isRfCitizen: true
-        ) {
-          name
-          bankName
-          rate
-          paymentDetails { payment }
-        }
-      }
-    `;
-
-    const response = await fetch(GRAPHQL_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query })
-    });
-
-    const data = await response.json();
-    const offers = data?.data?.getLoanOffer;
-
-    if (!offers || offers.length === 0) return res.json([]);
-
-    // Сортировка по ставке
-    const sorted = offers.sort((a, b) => a.rate - b.rate);
-
-    const unique = [];
-    const seen = new Set();
-
-    for (let o of sorted) {
-      if (!seen.has(o.bankName)) {
-        seen.add(o.bankName);
-        unique.push({
-          bank: o.bankName,
-          rate: o.rate,
-          monthlyPayment: o.paymentDetails?.[0]?.payment || 0
-        });
-      }
-      if (unique.length === 3) break;
-    }
-
-    res.json(unique);
-  } catch (err) {
-    console.error("❌ BASE ERROR:", err);
-    res.status(500).json({ error: "Ошибка сервера при получении базовых офферов" });
-  }
-});
-
-// =====================================================
-// 🔽 КАЛЬКУЛЯТОР (С УЧЕТОМ ФИЛЬТРОВ: IT, СЕМЬЯ И Т.Д.)
-// =====================================================
 app.post("/calculate", async (req, res) => {
   try {
-    // Получаем данные из тела запроса
-    let { 
-      price, 
-      complex, 
-      initialPayment, 
-      loanPeriod, 
-      hasChild, 
-      isIT, 
-      isMilitary, 
-      mortgageFSK 
-    } = req.body;
+    const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, mortgageFSK } = req.body;
 
-    // --- ВАЛИДАЦИЯ И ПРИВЕДЕНИЕ ТИПОВ ---
+    // Подготовка данных (в копейках и числах)
     const cost = parseInt(price);
-    const period = parseInt(loanPeriod) || 30;
-    const initial = parseInt(initialPayment) || Math.floor(cost * 0.2);
+    const initial = parseInt(initialPayment);
+    const period = parseInt(loanPeriod);
 
-    if (!cost || isNaN(cost)) return res.status(400).json({ error: "Неверная цена" });
-    if (!complex) return res.status(400).json({ error: "Не выбран ЖК" });
+    // Логика выбора типа ипотеки (как в Движ)
+    let mortgageType = "STANDARD";
+    if (hasChild) mortgageType = "FAMILY";
+    if (isIT) mortgageType = "IT";
+    if (isMilitary) mortgageType = "MILITARY";
 
-    // Формируем запрос
-    // ВАЖНО: mortgageType: STANDARD удален, чтобы работали фильтры льготных программ
+    // ВНИМАНИЕ: Исправлены loanTypes и propertyTypes на массивы [ ]
+    // Также убраны лишние фильтры, если они могут вызвать 400 ошибку
     const query = `
       query {
         getLoanOffer(
           loanPeriod: ${period},
-          loanTypes: PRIMARY,
-          propertyTypes: FLAT,
+          loanTypes: [PRIMARY],
+          propertyTypes: [FLAT],
           housingComplexUuid: "${complex}",
           initialPayment: ${initial},
           cost: ${cost},
           isRfCitizen: true,
+          mortgageType: ${mortgageType},
           filters: {
             hasChild: ${!!hasChild},
             isIT: ${!!isIT},
-            isMilitary: ${!!isMilitary},
-            mortgageFSK: ${!!mortgageFSK}
+            isMilitary: ${!!isMilitary}
+            ${mortgageFSK ? ", mortgageFSK: true" : ""}
           }
         ) {
           name
           bankName
           rate
-          paymentDetails { payment }
+          paymentDetails {
+            payment
+          }
         }
       }
     `;
@@ -147,10 +71,10 @@ app.post("/calculate", async (req, res) => {
 
     const result = await response.json();
 
-    // Если API вернуло ошибку в структуре GraphQL
+    // Если API вернуло ошибку валидации схемы
     if (result.errors) {
-      console.error("❌ GRAPHQL ERROR:", result.errors);
-      return res.status(400).json({ error: "Ошибка параметров запроса к банку" });
+      console.error("❌ GRAPHQL ERROR:", JSON.stringify(result.errors, null, 2));
+      return res.status(400).json({ error: "Ошибка параметров запроса", details: result.errors });
     }
 
     const offers = result?.data?.getLoanOffer;
@@ -159,36 +83,28 @@ app.post("/calculate", async (req, res) => {
       return res.json([]);
     }
 
-    // Сортировка: сначала самые низкие ставки
-    const sorted = offers.sort((a, b) => a.rate - b.rate);
+    // Обработка результатов (сортировка по минимальному платежу)
+    const processedOffers = offers
+      .map(o => ({
+        program: o.name,
+        bank: o.bankName,
+        rate: o.rate,
+        monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
+        term: period * 12
+      }))
+      .sort((a, b) => a.monthlyPayment - b.monthlyPayment)
+      .filter((item, index, self) => 
+        index === self.findIndex((t) => t.bank === item.bank)
+      ) // Уникальные банки
+      .slice(0, 3); // Только топ-3
 
-    // Уникализация по банкам (чтобы не было 3 предложений от одного Сбера)
-    const unique = [];
-    const seenBanks = new Set();
+    res.json(processedOffers);
 
-    for (let o of sorted) {
-      if (!seenBanks.has(o.bankName)) {
-        seenBanks.add(o.bankName);
-        unique.push({
-          program: o.name,
-          bank: o.bankName,
-          rate: o.rate,
-          monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
-          term: period * 12
-        });
-      }
-      if (unique.length === 3) break;
-    }
-
-    res.json(unique);
   } catch (err) {
-    console.error("❌ CALC ERROR:", err);
-    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+    console.error("❌ SERVER ERROR:", err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-// Запуск
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 SERVER STARTED ON PORT ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 API DVIZH-STYLE READY`));
