@@ -1,14 +1,14 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import fetch from "node-fetch"; // если используешь Node.js < 18
+import fetch from "node-fetch";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// CORS
+// Настройка CORS
 app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET", "POST"],
@@ -17,17 +17,17 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-// проверка
+// Проверка работоспособности
 app.get("/", (req, res) => {
-  res.send("API WORKS");
+  res.send("API ипотечного калькулятора работает");
 });
 
 // =====================================================
-// 🔝 БАЗОВЫЕ ПРЕДЛОЖЕНИЯ (НЕ ЗАВИСЯТ ОТ КАЛЬКУЛЯТОРА)
+// 🔝 БАЗОВЫЕ ПРЕДЛОЖЕНИЯ (ОБЫЧНЫЕ СТАВКИ)
 // =====================================================
 app.get("/offer-base", async (req, res) => {
   try {
-    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
+    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2"; // ДНС СИТИ по умолчанию
     const price = 5000000 * 100;
     const initialPayment = Math.floor(price * 0.2);
     const loanPeriod = 30;
@@ -53,7 +53,7 @@ app.get("/offer-base", async (req, res) => {
 
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
 
@@ -62,10 +62,9 @@ app.get("/offer-base", async (req, res) => {
 
     if (!offers || offers.length === 0) return res.json([]);
 
-    // сортировка по ставке
+    // Сортировка по ставке
     const sorted = offers.sort((a, b) => a.rate - b.rate);
 
-    // уникальные банки
     const unique = [];
     const seen = new Set();
 
@@ -84,40 +83,52 @@ app.get("/offer-base", async (req, res) => {
     res.json(unique);
   } catch (err) {
     console.error("❌ BASE ERROR:", err);
-    res.status(500).json({ error: "Ошибка сервера" });
+    res.status(500).json({ error: "Ошибка сервера при получении базовых офферов" });
   }
 });
 
 // =====================================================
-// 🔽 КАЛЬКУЛЯТОР (ПО ПАРАМЕТРАМ И ФИЛЬТРАМ)
+// 🔽 КАЛЬКУЛЯТОР (С УЧЕТОМ ФИЛЬТРОВ: IT, СЕМЬЯ И Т.Д.)
 // =====================================================
 app.post("/calculate", async (req, res) => {
   try {
-    let { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, mortgageFSK } = req.body;
+    // Получаем данные из тела запроса
+    let { 
+      price, 
+      complex, 
+      initialPayment, 
+      loanPeriod, 
+      hasChild, 
+      isIT, 
+      isMilitary, 
+      mortgageFSK 
+    } = req.body;
 
-    // --- ВАЛИДАЦИЯ ---
-    if (!price || isNaN(price)) return res.status(400).json({ error: "Неверная цена" });
+    // --- ВАЛИДАЦИЯ И ПРИВЕДЕНИЕ ТИПОВ ---
+    const cost = parseInt(price);
+    const period = parseInt(loanPeriod) || 30;
+    const initial = parseInt(initialPayment) || Math.floor(cost * 0.2);
+
+    if (!cost || isNaN(cost)) return res.status(400).json({ error: "Неверная цена" });
     if (!complex) return res.status(400).json({ error: "Не выбран ЖК" });
-    if (!loanPeriod || isNaN(loanPeriod)) loanPeriod = 30;
-    if (!initialPayment || isNaN(initialPayment)) initialPayment = Math.floor(price * 0.2);
-    if (initialPayment >= price) initialPayment = Math.floor(price * 0.2);
 
+    // Формируем запрос
+    // ВАЖНО: mortgageType: STANDARD удален, чтобы работали фильтры льготных программ
     const query = `
       query {
         getLoanOffer(
-          loanPeriod: ${loanPeriod},
+          loanPeriod: ${period},
           loanTypes: PRIMARY,
           propertyTypes: FLAT,
           housingComplexUuid: "${complex}",
-          initialPayment: ${initialPayment},
-          cost: ${price},
-          mortgageType: STANDARD,
+          initialPayment: ${initial},
+          cost: ${cost},
           isRfCitizen: true,
           filters: {
-            hasChild: ${hasChild || false},
-            isIT: ${isIT || false},
-            isMilitary: ${isMilitary || false},
-            mortgageFSK: ${mortgageFSK || false}
+            hasChild: ${!!hasChild},
+            isIT: ${!!isIT},
+            isMilitary: ${!!isMilitary},
+            mortgageFSK: ${!!mortgageFSK}
           }
         ) {
           name
@@ -130,25 +141,28 @@ app.post("/calculate", async (req, res) => {
 
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
 
-    const data = await response.json();
-    const offers = data?.data?.getLoanOffer;
+    const result = await response.json();
 
-    if (!offers || offers.length === 0) {
+    // Если API вернуло ошибку в структуре GraphQL
+    if (result.errors) {
+      console.error("❌ GRAPHQL ERROR:", result.errors);
+      return res.status(400).json({ error: "Ошибка параметров запроса к банку" });
+    }
+
+    const offers = result?.data?.getLoanOffer;
+
+    if (!offers || !Array.isArray(offers) || offers.length === 0) {
       return res.json([]);
     }
 
-    // сортировка по платежу
-    const sorted = offers.sort((a, b) => {
-      const aPay = a.paymentDetails?.[0]?.payment || 0;
-      const bPay = b.paymentDetails?.[0]?.payment || 0;
-      return aPay - bPay;
-    });
+    // Сортировка: сначала самые низкие ставки
+    const sorted = offers.sort((a, b) => a.rate - b.rate);
 
-    // уникальные банки
+    // Уникализация по банкам (чтобы не было 3 предложений от одного Сбера)
     const unique = [];
     const seenBanks = new Set();
 
@@ -160,7 +174,7 @@ app.post("/calculate", async (req, res) => {
           bank: o.bankName,
           rate: o.rate,
           monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
-          term: loanPeriod * 12
+          term: period * 12
         });
       }
       if (unique.length === 3) break;
@@ -169,10 +183,12 @@ app.post("/calculate", async (req, res) => {
     res.json(unique);
   } catch (err) {
     console.error("❌ CALC ERROR:", err);
-    res.status(500).json({ error: "Ошибка сервера" });
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
   }
 });
 
-// старт
+// Запуск
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 SERVER STARTED"));
+app.listen(PORT, () => {
+  console.log(`🚀 SERVER STARTED ON PORT ${PORT}`);
+});
