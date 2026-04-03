@@ -21,13 +21,11 @@ app.get("/", (req, res) => {
   res.send("API WORKS");
 });
 
-
 // =====================================================
 // 🔝 БАЗОВЫЕ ПРЕДЛОЖЕНИЯ (НЕ ЗАВИСЯТ ОТ КАЛЬКУЛЯТОРА)
 // =====================================================
 app.get("/offer-base", async (req, res) => {
   try {
-
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2"; // можно менять
     const price = 5000000 * 100;
     const initialPayment = Math.floor(price * 0.2);
@@ -56,18 +54,14 @@ app.get("/offer-base", async (req, res) => {
 
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
 
     const data = await response.json();
     const offers = data?.data?.getLoanOffer;
 
-    if (!offers || offers.length === 0) {
-      return res.json([]);
-    }
+    if (!offers || offers.length === 0) return res.json([]);
 
     // сортировка по ставке
     const sorted = offers.sort((a, b) => a.rate - b.rate);
@@ -86,7 +80,6 @@ app.get("/offer-base", async (req, res) => {
           monthlyPayment: o.paymentDetails?.[0]?.payment || 0
         });
       }
-
       if (unique.length === 3) break;
     }
 
@@ -98,35 +91,23 @@ app.get("/offer-base", async (req, res) => {
   }
 });
 
-
 // =====================================================
 // 🔽 КАЛЬКУЛЯТОР (ПО ПАРАМЕТРАМ)
 // =====================================================
 app.post("/calculate", async (req, res) => {
   try {
-    let { price, complex, initialPayment, loanPeriod } = req.body;
+    let { price, complex, initialPayment, loanPeriod, fsk, child, it, military } = req.body;
 
     // --- ВАЛИДАЦИЯ ---
-    if (!price || isNaN(price)) {
-      return res.status(400).json({ error: "Неверная цена" });
-    }
-
-    if (!complex) {
-      return res.status(400).json({ error: "Не выбран ЖК" });
-    }
-
-    if (!loanPeriod || isNaN(loanPeriod)) {
-      loanPeriod = 30;
-    }
-
-    if (!initialPayment || isNaN(initialPayment)) {
-      initialPayment = Math.floor(price * 0.2);
-    }
+    price = Number(price) || 5000000 * 100;
+    loanPeriod = Number(loanPeriod) || 30;
+    initialPayment = Number(initialPayment) || Math.floor(price * 0.2);
 
     if (initialPayment >= price) {
       initialPayment = Math.floor(price * 0.2);
     }
 
+    // формируем GraphQL query с фильтрами
     const query = `
       query {
         getLoanOffer(
@@ -136,8 +117,10 @@ app.post("/calculate", async (req, res) => {
           housingComplexUuid: "${complex}",
           initialPayment: ${initialPayment},
           cost: ${price},
-          mortgageType: STANDARD,
-          isRfCitizen: true
+          mortgageType: ${military ? "MILITARY" : "STANDARD"},
+          isRfCitizen: true,
+          isSubsidizedByDeveloper: ${fsk ? true : false},
+          maternalCapital: ${child ? 500000 : 0}
         ) {
           name
           bankName
@@ -151,9 +134,7 @@ app.post("/calculate", async (req, res) => {
 
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
 
@@ -190,7 +171,6 @@ app.post("/calculate", async (req, res) => {
           term: loanPeriod * 12
         });
       }
-
       if (unique.length === 3) break;
     }
 
@@ -202,10 +182,6 @@ app.post("/calculate", async (req, res) => {
   }
 });
 
-
 // старт
 const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log("🚀 SERVER STARTED");
-});
+app.listen(PORT, () => console.log("🚀 SERVER STARTED"));
