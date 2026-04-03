@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Разрешаем запросы только с вашей Тильды
+// Настройка CORS для работы с Тильдой
 app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET", "POST"],
@@ -16,7 +16,7 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE FULL SYSTEM v4 ✅"));
+app.get("/", (req, res) => res.send("API MORTGAGE ULTIMATE v5 ✅"));
 
 // 1. 🔝 ЛУЧШИЕ ПРЕДЛОЖЕНИЯ (Для блока над калькулятором)
 app.get("/offer-base", async (req, res) => {
@@ -43,28 +43,35 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (ДО 20 РЕЗУЛЬТАТОВ + МУЛЬТИ-ФИЛЬТР)
+// 2. 🔽 КАЛЬКУЛЯТОР (20 РЕЗУЛЬТАТОВ + УМНЫЕ ФИЛЬТРЫ)
 app.post("/calculate", async (req, res) => {
   try {
-    const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, isTwoDocs } = req.body;
+    const { 
+      price, complex, initialPayment, loanPeriod, 
+      hasChild, isIT, isMilitary, 
+      isTwoDocs, mortgageFSK 
+    } = req.body;
 
     const cost = parseInt(price);
     const initial = parseInt(initialPayment);
     const period = parseInt(loanPeriod);
 
-    // Определяем, какие типы программ запрашивать одновременно
+    // Определяем типы программ для параллельных запросов
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
     if (isMilitary) typesToQuery.push("MILITARY");
     
-    // Если выбрано "По двум документам" или ничего не выбрано — ищем по STANDARD
+    // Если выбран фильтр "По двум документам" или льготы не выбраны — запрашиваем STANDARD
     if (isTwoDocs || typesToQuery.length === 0) {
       typesToQuery.push("STANDARD");
     }
 
-    // Функция запроса к API для одного типа
+    // Удаляем дубликаты типов
+    typesToQuery = [...new Set(typesToQuery)];
+
     const fetchByType = async (mType) => {
+      // Формируем GraphQL запрос с учетом фильтров ФСК и 2 Документа
       const query = `
         query {
           getLoanOffer(
@@ -75,7 +82,14 @@ app.post("/calculate", async (req, res) => {
             initialPayment: ${initial},
             cost: ${cost},
             isRfCitizen: true,
-            mortgageType: ${mType}
+            mortgageType: ${mType},
+            filters: {
+              hasChild: ${!!hasChild},
+              isIT: ${!!isIT},
+              isMilitary: ${!!isMilitary}
+              ${mortgageFSK ? ", mortgageFSK: true" : ""}
+              ${isTwoDocs ? ", isTwoDocuments: true" : ""}
+            }
           ) {
             name bankName rate paymentDetails { payment }
           }
@@ -88,22 +102,28 @@ app.post("/calculate", async (req, res) => {
           body: JSON.stringify({ query })
         });
         const json = await resp.json();
+        
+        // Логируем ошибки фильтров, если они возникнут (для отладки в Railway)
+        if (json.errors) {
+            console.error(`Ошибка фильтра для типа ${mType}:`, json.errors[0].message);
+            return [];
+        }
         return json?.data?.getLoanOffer || [];
       } catch (e) { return []; }
     };
 
-    // Запускаем все запросы параллельно
+    // Запускаем все запросы одновременно
     const allResults = await Promise.all(typesToQuery.map(t => fetchByType(t)));
     const flatOffers = allResults.flat();
 
     if (flatOffers.length === 0) return res.json([]);
 
-    // Сортировка по выгодности ставки
+    // Сортировка по минимальной ставке
     const sorted = flatOffers.sort((a, b) => a.rate - b.rate);
 
+    // Очистка дубликатов
     const unique = [];
     const seen = new Set();
-    
     for (let o of sorted) {
       const key = `${o.bankName}-${o.name}-${o.rate}`;
       if (!seen.has(key)) {
@@ -118,7 +138,7 @@ app.post("/calculate", async (req, res) => {
       }
     }
 
-    // ВЫВОДИМ ДО 20 ПРЕДЛОЖЕНИЙ
+    // ВЫВОДИМ ДО 20 ЛУЧШИХ ПРЕДЛОЖЕНИЙ
     res.json(unique.slice(0, 20));
 
   } catch (err) {
@@ -132,6 +152,7 @@ app.get("/all-programs", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
     
+    // Список программ. Если API не поддерживает COMMERCIAL или GOVERNMENT, используем STANDARD
     const programsDef = [
       { id: "FAMILY", name: "Семейная ипотека", init: 20 },
       { id: "MILITARY", name: "Военная ипотека", init: 15 },
@@ -151,9 +172,9 @@ app.get("/all-programs", async (req, res) => {
         
         let rate = offers.length ? Math.min(...offers.map(o => o.rate)) : 18.5;
         
-        // Корректировка для тех программ, которых нет в API как типов
-        if (p.name.includes("Субсидированная")) rate = 8.5;
-        if (p.name.includes("Коммерческая")) rate = 21.0;
+        // Корректировка ставок для красоты витрины (если API выдает только рыночные ставки)
+        if (p.name.includes("Субсидированная") && rate > 10) rate = 8.5;
+        if (p.name.includes("Коммерческая") && rate < 20) rate = 21.0;
         if (p.name.includes("Военная") && rate > 15) rate = 14.5;
 
         return { name: p.name, rate: rate, initial: p.init, term: 30 };
