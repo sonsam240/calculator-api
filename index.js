@@ -103,6 +103,12 @@ app.post("/calculate", async (req, res) => {
     if (!initialPayment || isNaN(initialPayment)) initialPayment = Math.floor(price * 0.2);
     if (initialPayment >= price) initialPayment = Math.floor(price * 0.2);
 
+    // приводим фильтры к булевым значениям
+    hasChild = !!hasChild;
+    isIT = !!isIT;
+    isMilitary = !!isMilitary;
+    mortgageFSK = !!mortgageFSK;
+
     const query = `
       query {
         getLoanOffer(
@@ -115,10 +121,10 @@ app.post("/calculate", async (req, res) => {
           mortgageType: STANDARD,
           isRfCitizen: true,
           filters: {
-            hasChild: ${hasChild || false},
-            isIT: ${isIT || false},
-            isMilitary: ${isMilitary || false},
-            mortgageFSK: ${mortgageFSK || false}
+            hasChild: ${hasChild},
+            isIT: ${isIT},
+            isMilitary: ${isMilitary},
+            mortgageFSK: ${mortgageFSK}
           }
         ) {
           name
