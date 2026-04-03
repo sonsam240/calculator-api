@@ -15,9 +15,9 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API DVIZH-READY v7 ✅"));
+app.get("/", (req, res) => res.send("API DVIZH-READY v9 ✅"));
 
-// 1. 🔝 ТОП ПРЕДЛОЖЕНИЯ (Над калькулятором)
+// 1. 🔝 ТОП ПРЕДЛОЖЕНИЯ
 app.get("/offer-base", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
@@ -37,20 +37,19 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (С АКТИВАЦИЕЙ ВСЕХ ФИЛЬТРОВ ИЗ ВАШЕЙ СХЕМЫ)
+// 2. 🔽 КАЛЬКУЛЯТОР (БЕЗ ФСК)
 app.post("/calculate", async (req, res) => {
   try {
     const { 
       price, complex, initialPayment, loanPeriod, 
       hasChild, isIT, isMilitary, 
-      isTwoDocs, useMatCapital, mortgageFSK 
+      isTwoDocs, useMatCapital 
     } = req.body;
 
     const cost = parseInt(price);
     const initial = parseInt(initialPayment);
     const period = parseInt(loanPeriod);
 
-    // Выбор типов программ
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
@@ -59,16 +58,8 @@ app.post("/calculate", async (req, res) => {
     typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
-      // ПАРАМЕТРЫ СТРОГО ПО ВАШЕМУ СКРИНШОТУ:
-      
-      // 1. По двум документам (используем наиболее вероятный Enum для Dvizh)
-      const proofAttr = isTwoDocs ? "proofOfIncome: BY_TWO_DOCUMENTS," : "";
-      
-      // 2. Ипотека от ФСК (поле isSubsidizedByDeveloper из вашего скрина)
-      const fskAttr = mortgageFSK ? "isSubsidizedByDeveloper: true," : "";
-      
-      // 3. Материнский капитал (поле maternalCapital из вашего скрина)
-      // Если чекбокс нажат, передаем сумму (пример: 833 000 руб * 100 копеек)
+      // proofOfIncome: TWO_DOCUMENTS (исправлено на основе прошлых логов)
+      const proofAttr = isTwoDocs ? "proofOfIncome: TWO_DOCUMENTS," : "";
       const matCapAttr = useMatCapital ? "maternalCapital: 83300000," : "";
 
       const query = `
@@ -83,7 +74,6 @@ app.post("/calculate", async (req, res) => {
             isRfCitizen: true,
             mortgageType: ${mType},
             ${proofAttr}
-            ${fskAttr}
             ${matCapAttr}
           ) {
             name bankName rate paymentDetails { payment }
@@ -93,10 +83,7 @@ app.post("/calculate", async (req, res) => {
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
         const json = await resp.json();
-        
-        // Логируем ошибку, если вдруг BY_TWO_DOCUMENTS не подошел (нужно будет сменить на TWO_DOCUMENTS)
         if (json.errors) console.error(`Ошибка API (${mType}):`, json.errors[0].message);
-        
         return json?.data?.getLoanOffer || [];
       } catch (e) { return []; }
     };
@@ -110,13 +97,7 @@ app.post("/calculate", async (req, res) => {
       const key = `${o.bankName}-${o.name}-${o.rate}`;
       if (!seen.has(key)) {
         seen.add(key);
-        unique.push({
-          program: o.name,
-          bank: o.bankName,
-          rate: o.rate,
-          monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
-          term: period * 12
-        });
+        unique.push({ program: o.name, bank: o.bankName, rate: o.rate, monthlyPayment: o.paymentDetails?.[0]?.payment || 0, term: period * 12 });
       }
     });
 
@@ -124,16 +105,15 @@ app.post("/calculate", async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// 3. 📋 ВСЕ ПРОГРАММЫ (Витрина из 7 программ)
+// 3. 📋 ВСЕ ПРОГРАММЫ
 app.get("/all-programs", async (req, res) => {
   try {
     const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
-    
     const programsDef = [
       { id: "FAMILY", name: "Семейная ипотека", init: 20, attr: "" },
       { id: "MILITARY", name: "Военная ипотека", init: 15, attr: "" },
-      { id: "STANDARD", name: "Ипотека по двум документам", init: 20, attr: "proofOfIncome: BY_TWO_DOCUMENTS," },
-      { id: "STANDARD", name: "Субсидированная ипотека", init: 15, attr: "isSubsidizedByDeveloper: true," },
+      { id: "STANDARD", name: "Ипотека по двум документам", init: 20, attr: "proofOfIncome: TWO_DOCUMENTS," },
+      { id: "STANDARD", name: "Субсидированная ипотека", init: 15, attr: "" },
       { id: "STANDARD", name: "Стандартная ипотека", init: 20, attr: "" },
       { id: "IT", name: "IT ипотека", init: 20, attr: "" },
       { id: "STANDARD", name: "Коммерческая ипотека", init: 30, attr: "" }
@@ -145,21 +125,16 @@ app.get("/all-programs", async (req, res) => {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
         const json = await resp.json();
         const offers = json?.data?.getLoanOffer || [];
-        
         let rate = offers.length ? Math.min(...offers.map(o => o.rate)) : 18.5;
-        
-        // Корректировка "красивых" ставок, если банк не отдал данные
         if (p.name.includes("Субсидированная") && rate > 10) rate = 8.8;
         if (p.name.includes("Коммерческая")) rate = 21.0;
         if (p.name.includes("Военная") && rate > 15) rate = 14.2;
-
         return { name: p.name, rate: rate, initial: p.init, term: 30 };
       } catch { return null; }
     }));
-
     res.json(results.filter(r => r !== null));
   } catch (err) { res.json([]); }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 API DVIZH-READY`));
+app.listen(PORT, () => console.log(`🚀 API RUNNING (NO FSK)`));
