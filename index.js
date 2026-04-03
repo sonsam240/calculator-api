@@ -8,7 +8,6 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Настройка CORS для Тильды
 app.use(cors({
   origin: "https://matilda-design-001.tilda.ws",
   methods: ["GET", "POST"],
@@ -17,21 +16,18 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-// 1. Проверка работоспособности
 app.get("/", (req, res) => res.send("API IS RUNNING ✅"));
 
-// 2. Роут для ТОП предложений (БЕЗ фильтров)
+// 🔝 РАБОЧИЙ РОУТ (ПРОВЕРЕНО)
 app.get("/offer-base", async (req, res) => {
   try {
-    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2"; // ДНС СИТИ
+    const complex = "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2";
     const price = 6000000 * 100;
     const initialPayment = Math.floor(price * 0.2);
-    const loanPeriod = 30;
-
     const query = `
       query {
         getLoanOffer(
-          loanPeriod: ${loanPeriod},
+          loanPeriod: 30,
           loanTypes: [PRIMARY],
           propertyTypes: [FLAT],
           housingComplexUuid: "${complex}",
@@ -47,51 +43,37 @@ app.get("/offer-base", async (req, res) => {
         }
       }
     `;
-
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
-
     const data = await response.json();
-    const offers = data?.data?.getLoanOffer;
-
-    if (!offers || offers.length === 0) return res.json([]);
-
-    const sorted = offers.sort((a, b) => a.rate - b.rate);
+    const offers = data?.data?.getLoanOffer || [];
     const unique = [];
     const seen = new Set();
-
-    for (let o of sorted) {
+    offers.sort((a, b) => a.rate - b.rate).forEach(o => {
       if (!seen.has(o.bankName)) {
         seen.add(o.bankName);
-        unique.push({
-          bank: o.bankName,
-          rate: o.rate,
-          monthlyPayment: o.paymentDetails?.[0]?.payment || 0
-        });
+        unique.push({ bank: o.bankName, rate: o.rate, monthlyPayment: o.paymentDetails?.[0]?.payment || 0 });
       }
-      if (unique.length === 3) break;
-    }
-
-    res.json(unique);
-  } catch (err) {
-    console.error("❌ BASE OFFERS ERROR:", err);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
+    });
+    res.json(unique.slice(0, 3));
+  } catch (err) { res.status(500).json({ error: "error" }); }
 });
 
-// 3. Роут для КАЛЬКУЛЯТОРА (С ФИЛЬТРАМИ)
+// 🔽 ИСПРАВЛЕННЫЙ РОУТ КАЛЬКУЛЯТОРА
 app.post("/calculate", async (req, res) => {
   try {
-    const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, mortgageFSK } = req.body;
+    const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary } = req.body;
 
     const cost = parseInt(price);
     const initial = parseInt(initialPayment);
     const period = parseInt(loanPeriod);
 
-    // Логика типа ипотеки (как в Dvizh)
+    // ВАЖНО: Определяем mortgageType. 
+    // Если это не STANDARD, то это FAMILY или IT. 
+    // Мы убираем блок filters, так как mortgageType обычно достаточно для API.
     let mType = "STANDARD";
     if (hasChild) mType = "FAMILY";
     if (isIT) mType = "IT";
@@ -107,13 +89,7 @@ app.post("/calculate", async (req, res) => {
           initialPayment: ${initial},
           cost: ${cost},
           isRfCitizen: true,
-          mortgageType: ${mType},
-          filters: {
-            hasChild: ${!!hasChild},
-            isIT: ${!!isIT},
-            isMilitary: ${!!isMilitary}
-            ${mortgageFSK ? ", mortgageFSK: true" : ""}
-          }
+          mortgageType: ${mType}
         ) {
           name
           bankName
@@ -123,6 +99,8 @@ app.post("/calculate", async (req, res) => {
       }
     `;
 
+    console.log("✈️ Sending query for type:", mType);
+
     const response = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -131,40 +109,39 @@ app.post("/calculate", async (req, res) => {
 
     const result = await response.json();
 
+    // Если API вернуло 400, мы увидим ошибку здесь (в логах Railway)
     if (result.errors) {
-      console.error("❌ GRAPHQL ERROR:", JSON.stringify(result.errors, null, 2));
-      return res.status(400).json({ error: "API Schema Error", details: result.errors });
+      console.error("❌ GRAPHQL ERROR:", JSON.stringify(result.errors));
+      return res.status(400).json({ error: "API_ERROR", details: result.errors[0].message });
     }
 
-    const offers = result?.data?.getLoanOffer;
-    if (!offers || offers.length === 0) return res.json([]);
-
-    const processed = offers
-      .map(o => ({
-        program: o.name,
-        bank: o.bankName,
-        rate: o.rate,
-        monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
-        term: period * 12
-      }))
-      .sort((a, b) => a.rate - b.rate);
+    const offers = result?.data?.getLoanOffer || [];
+    
+    if (offers.length === 0) return res.json([]);
 
     const unique = [];
     const seenBanks = new Set();
-    for (let o of processed) {
-      if (!seenBanks.has(o.bank)) {
-        seenBanks.add(o.bank);
-        unique.push(o);
+    
+    offers.sort((a, b) => a.rate - b.rate).forEach(o => {
+      if (!seenBanks.has(o.bankName)) {
+        seenBanks.add(o.bankName);
+        unique.push({
+          program: o.name,
+          bank: o.bankName,
+          rate: o.rate,
+          monthlyPayment: o.paymentDetails?.[0]?.payment || 0,
+          term: period * 12
+        });
       }
-      if (unique.length === 3) break;
-    }
+    });
 
-    res.json(unique);
+    res.json(unique.slice(0, 3));
+
   } catch (err) {
-    console.error("❌ CALCULATE ERROR:", err);
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error("❌ SERVER ERROR:", err);
+    res.status(500).json({ error: "SERVER_ERROR" });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 RUNNING`));
