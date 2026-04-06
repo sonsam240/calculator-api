@@ -7,17 +7,18 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+// Разрешаем запросы с вашего домена Тильды
 app.use(cors({
-  origin: "https://matilda-design-001.tilda.ws",
+  origin: ["https://matilda-design-001.tilda.ws", "http://localhost:3000"],
   methods: ["GET", "POST"],
   allowedHeaders: ["Content-Type"]
 }));
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE v13 ✅"));
+app.get("/", (req, res) => res.send("API MORTGAGE v14 ✅ (Active)"));
 
-// 1. 🔝 НАДЕЖНЫЙ РОУТ ДЛЯ ТОП-ПРЕДЛОЖЕНИЙ
+// 1. ТОП-ПРЕДЛОЖЕНИЯ (для плиток сверху)
 app.get("/offer-base", async (req, res) => {
   const fetchTop = async (mType) => {
     const query = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2", initialPayment: 120000000, cost: 600000000, isRfCitizen: true, mortgageType: ${mType}) { bankName rate paymentDetails { payment } } }`;
@@ -27,9 +28,7 @@ app.get("/offer-base", async (req, res) => {
   };
 
   try {
-    // Пробуем сначала Господдержку (самые низкие ставки)
     let offers = await fetchTop("GOVERNMENT_SUPPORT");
-    // Если пусто — пробуем Стандарт
     if (offers.length === 0) offers = await fetchTop("STANDARD");
 
     const unique = [];
@@ -44,25 +43,47 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. 🔽 КАЛЬКУЛЯТОР (МУЛЬТИ-ФИЛЬТР)
+// 2. КАЛЬКУЛЯТОР (ОСНОВНОЙ ПОИСК)
 app.post("/calculate", async (req, res) => {
   try {
     const { price, complex, initialPayment, loanPeriod, hasChild, isIT, isMilitary, hasCertificate, isTwoDocs, useMatCapital } = req.body;
     const cost = parseInt(price), initial = parseInt(initialPayment), period = parseInt(loanPeriod);
 
+    // Логика выбора типов ипотеки на основе чекбоксов
     let typesToQuery = [];
     if (hasChild) typesToQuery.push("FAMILY");
     if (isIT) typesToQuery.push("IT");
     if (isMilitary) typesToQuery.push("MILITARY");
-    if (hasCertificate || typesToQuery.length === 0) { typesToQuery.push("STANDARD"); typesToQuery.push("GOVERNMENT_SUPPORT"); }
-    if (isTwoDocs) typesToQuery.push("STANDARD");
-    typesToQuery = [...new Set(typesToQuery)];
+    
+    // Если ничего не выбрано или есть спец. условия, добавляем стандартные программы
+    if (typesToQuery.length === 0 || hasCertificate || isTwoDocs) {
+        typesToQuery.push("STANDARD");
+        typesToQuery.push("GOVERNMENT_SUPPORT");
+    }
+    typesToQuery = [...new Set(typesToQuery)]; // Убираем дубликаты
 
     const fetchByType = async (mType) => {
       const proofAttr = isTwoDocs ? "proofOfIncome: no_needed," : "";
       const matCapAttr = useMatCapital ? "maternalCapital: 83300000," : "";
       const certAttr = hasCertificate ? "subsidyType: saveInitialPayment, subsidy: 60000000," : "";
-      const query = `query { getLoanOffer(loanPeriod: ${period}, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "${complex}", initialPayment: ${initial}, cost: ${cost}, isRfCitizen: true, mortgageType: ${mType}, ${proofAttr} ${matCapAttr} ${certAttr}) { name bankName rate paymentDetails { payment } } }`;
+      
+      const query = `query { 
+        getLoanOffer(
+            loanPeriod: ${period}, 
+            agendaType: primary_housing, 
+            loanTypes: [PRIMARY], 
+            propertyTypes: [FLAT], 
+            housingComplexUuid: "${complex}", 
+            initialPayment: ${initial}, 
+            cost: ${cost}, 
+            isRfCitizen: true, 
+            mortgageType: ${mType}, 
+            ${proofAttr} ${matCapAttr} ${certAttr}
+        ) { 
+            name bankName rate paymentDetails { payment } 
+        } 
+      }`;
+      
       try {
         const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
         const json = await resp.json();
@@ -72,45 +93,25 @@ app.post("/calculate", async (req, res) => {
 
     const allResults = await Promise.all(typesToQuery.map(t => fetchByType(t)));
     const flatOffers = allResults.flat();
+    
     const unique = [];
     const seen = new Set();
     flatOffers.sort((a, b) => a.rate - b.rate).forEach(o => {
-      const key = `${o.bankName}-${o.name}-${o.rate}`;
+      const key = `${o.bankName}-${o.rate}`;
       if (!seen.has(key)) {
         seen.add(key);
-        unique.push({ program: o.name, bank: o.bankName, rate: o.rate, monthlyPayment: o.paymentDetails?.[0]?.payment || 0, term: period * 12 });
+        unique.push({ 
+            program: o.name, 
+            bank: o.bankName, 
+            rate: o.rate, 
+            monthlyPayment: o.paymentDetails?.[0]?.payment || 0 
+        });
       }
     });
-    res.json(unique.slice(0, 20));
+    
+    res.json(unique.slice(0, 15));
   } catch (err) { res.status(500).json([]); }
 });
 
-// 3. 📋 ВСЕ ПРОГРАММЫ
-app.get("/all-programs", async (req, res) => {
-  try {
-    const programsDef = [
-      { id: "FAMILY", name: "Семейная ипотека", init: 20 },
-      { id: "MILITARY", name: "Военная ипотека", init: 15 },
-      { id: "STANDARD", name: "Ипотека по двум документам", init: 20, attr: "proofOfIncome: no_needed," },
-      { id: "GOVERNMENT_SUPPORT", name: "Субсидированная ипотека", init: 15 },
-      { id: "STANDARD", name: "Стандартная ипотека", init: 20 },
-      { id: "IT", name: "IT ипотека", init: 20 },
-      { id: "FAR_EAST", name: "Дальневосточная ипотека", init: 20 }
-    ];
-    const results = await Promise.all(programsDef.map(async (p) => {
-      const q = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${p.id}, ${p.attr || ''}) { rate } }`;
-      try {
-        const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q }) });
-        const json = await resp.json();
-        const offers = json?.data?.getLoanOffer || [];
-        let rate = offers.length ? Math.min(...offers.map(o => o.rate)) : 18.9;
-        if (p.name.includes("Субсидированная") && rate > 10) rate = 8.5;
-        if (p.name.includes("Дальневосточная") && rate > 5) rate = 2.0;
-        return { name: p.name, rate: rate, initial: p.init };
-      } catch { return null; }
-    }));
-    res.json(results.filter(r => r !== null));
-  } catch (err) { res.json([]); }
-});
-
-app.listen(process.env.PORT || 3000);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
