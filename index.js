@@ -7,7 +7,6 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Разрешаем запросы с вашего домена Тильды
 app.use(cors({
   origin: ["https://matilda-design-001.tilda.ws", "http://localhost:3000"],
   methods: ["GET", "POST"],
@@ -16,9 +15,9 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE v19 ✅ (Full Support & Titles)"));
+app.get("/", (req, res) => res.send("API MORTGAGE v20 ✅ (Tab Support & Arctic Support)"));
 
-// 1. ТОП-ПРЕДЛОЖЕНИЯ (для трех карточек сверху)
+// 1. ТОП-ПРЕДЛОЖЕНИЯ
 app.get("/offer-base", async (req, res) => {
   const fetchTop = async (mType) => {
     const query = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${mType}) { bankName rate paymentDetails { payment } } }`;
@@ -28,14 +27,10 @@ app.get("/offer-base", async (req, res) => {
       return data?.data?.getLoanOffer || [];
     } catch { return []; }
   };
-
   try {
-    // Пытаемся найти лучшие ставки по разным программам для топа
     let offers = await fetchTop("FAR_EAST");
-    if (offers.length === 0) offers = await fetchTop("IT");
+    if (offers.length === 0) offers = await fetchTop("FAMILY");
     if (offers.length === 0) offers = await fetchTop("GOVERNMENT_SUPPORT");
-    if (offers.length === 0) offers = await fetchTop("STANDARD");
-
     const unique = [];
     const seen = new Set();
     offers.sort((a, b) => a.rate - b.rate).forEach(o => {
@@ -48,7 +43,7 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. ОСНОВНОЙ РАСЧЕТ (ПО КНОПКЕ)
+// 2. ОСНОВНОЙ РАСЧЕТ
 app.post("/calculate", async (req, res) => {
   try {
     const { 
@@ -63,13 +58,13 @@ app.post("/calculate", async (req, res) => {
     if (hasChild) typesToQuery.push("FAMILY");
     if (isMilitary) typesToQuery.push("MILITARY");
     
-    // Если выбрано "Стандартная" или ничего не выбрано, или включены спец-опции
-    if (isStandard || typesToQuery.length === 0 || hasCertificate || isTwoDocs) {
+    // Если выбрано стандартно или пустой список
+    if (isStandard || typesToQuery.length === 0 || isTwoDocs || hasCertificate) {
       typesToQuery.push("GOVERNMENT_SUPPORT");
       typesToQuery.push("STANDARD");
     }
     
-    typesToQuery = [...new Set(typesToQuery)]; // Убираем дубликаты
+    typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
       const proofAttr = isTwoDocs ? "proofOfIncome: no_needed," : "";
@@ -90,17 +85,13 @@ app.post("/calculate", async (req, res) => {
           ${proofAttr} ${certAttr} ${matAttr}
         ) { name bankName rate paymentDetails { payment } } 
       }`;
-
-      try {
-        const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
-        const json = await resp.json();
-        return json?.data?.getLoanOffer || [];
-      } catch (e) { return []; }
+      const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+      const json = await resp.json();
+      return json?.data?.getLoanOffer || [];
     };
 
     const results = await Promise.all(typesToQuery.map(t => fetchByType(t)));
     const flatOffers = results.flat();
-    
     const unique = [];
     const seen = new Set();
     flatOffers.sort((a, b) => a.rate - b.rate).forEach(o => {
@@ -110,10 +101,9 @@ app.post("/calculate", async (req, res) => {
         unique.push({ program: o.name, bank: o.bankName, rate: o.rate, monthlyPayment: o.paymentDetails?.[0]?.payment || 0 });
       }
     });
-
     res.json(unique.slice(0, 15));
   } catch (err) { res.status(500).json([]); }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
+app.listen(PORT);
