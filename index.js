@@ -7,6 +7,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+// Разрешаем запросы с вашего домена Тильды
 app.use(cors({
   origin: ["https://matilda-design-001.tilda.ws", "http://localhost:3000"],
   methods: ["GET", "POST"],
@@ -15,9 +16,9 @@ app.use(cors({
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE v16 ✅ (FAR_EAST Support)"));
+app.get("/", (req, res) => res.send("API MORTGAGE v19 ✅ (Full Support & Titles)"));
 
-// 1. ТОП-ПРЕДЛОЖЕНИЯ
+// 1. ТОП-ПРЕДЛОЖЕНИЯ (для трех карточек сверху)
 app.get("/offer-base", async (req, res) => {
   const fetchTop = async (mType) => {
     const query = `query { getLoanOffer(loanPeriod: 30, agendaType: primary_housing, loanTypes: [PRIMARY], propertyTypes: [FLAT], housingComplexUuid: "4a6fdf66-a49e-498c-bdf7-dbe589fa51c2", initialPayment: 200000000, cost: 600000000, isRfCitizen: true, mortgageType: ${mType}) { bankName rate paymentDetails { payment } } }`;
@@ -29,8 +30,9 @@ app.get("/offer-base", async (req, res) => {
   };
 
   try {
-    // Для топа сначала ищем ДВ-ипотеку (самая низкая), если нет - господдержку
+    // Пытаемся найти лучшие ставки по разным программам для топа
     let offers = await fetchTop("FAR_EAST");
+    if (offers.length === 0) offers = await fetchTop("IT");
     if (offers.length === 0) offers = await fetchTop("GOVERNMENT_SUPPORT");
     if (offers.length === 0) offers = await fetchTop("STANDARD");
 
@@ -46,27 +48,28 @@ app.get("/offer-base", async (req, res) => {
   } catch (err) { res.json([]); }
 });
 
-// 2. КАЛЬКУЛЯТОР
+// 2. ОСНОВНОЙ РАСЧЕТ (ПО КНОПКЕ)
 app.post("/calculate", async (req, res) => {
   try {
     const { 
       price, complex, initialPayment, loanPeriod, 
-      hasChild, isMilitary, isFE, isStandard, 
+      hasChild, isMilitary, isFE, isIT, isStandard, 
       hasCertificate, useMatCapital, isTwoDocs 
     } = req.body;
 
     let typesToQuery = [];
     if (isFE) typesToQuery.push("FAR_EAST");
+    if (isIT) typesToQuery.push("IT");
     if (hasChild) typesToQuery.push("FAMILY");
     if (isMilitary) typesToQuery.push("MILITARY");
     
-    // Если выбрано стандартно или список пуст
+    // Если выбрано "Стандартная" или ничего не выбрано, или включены спец-опции
     if (isStandard || typesToQuery.length === 0 || hasCertificate || isTwoDocs) {
       typesToQuery.push("GOVERNMENT_SUPPORT");
       typesToQuery.push("STANDARD");
     }
     
-    typesToQuery = [...new Set(typesToQuery)];
+    typesToQuery = [...new Set(typesToQuery)]; // Убираем дубликаты
 
     const fetchByType = async (mType) => {
       const proofAttr = isTwoDocs ? "proofOfIncome: no_needed," : "";
@@ -88,13 +91,15 @@ app.post("/calculate", async (req, res) => {
         ) { name bankName rate paymentDetails { payment } } 
       }`;
 
-      const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
-      const json = await resp.json();
-      return json?.data?.getLoanOffer || [];
+      try {
+        const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
+        const json = await resp.json();
+        return json?.data?.getLoanOffer || [];
+      } catch (e) { return []; }
     };
 
-    const allResults = await Promise.all(typesToQuery.map(t => fetchByType(t)));
-    const flatOffers = allResults.flat();
+    const results = await Promise.all(typesToQuery.map(t => fetchByType(t)));
+    const flatOffers = results.flat();
     
     const unique = [];
     const seen = new Set();
@@ -111,4 +116,4 @@ app.post("/calculate", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
