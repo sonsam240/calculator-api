@@ -11,7 +11,7 @@ app.use(cors({ origin: "*", methods: ["GET", "POST"], allowedHeaders: ["Content-
 
 const GRAPHQL_ENDPOINT = process.env.GRAPHQL_ENDPOINT;
 
-app.get("/", (req, res) => res.send("API MORTGAGE v35 ✅ (MatCap Calc & TwoDocs Logic)"));
+app.get("/", (req, res) => res.send("API MORTGAGE v36 ✅"));
 
 app.post("/calculate", async (req, res) => {
   try {
@@ -38,9 +38,7 @@ app.post("/calculate", async (req, res) => {
     typesToQuery = [...new Set(typesToQuery)];
 
     const fetchByType = async (mType) => {
-      // МАТЕРИНСКИЙ КАПИТАЛ: Добавляем актуальную сумму (833 000 руб) к расчету
       const matValue = useMatCapital ? 83300000 : 0;
-      
       const query = `query { 
         getLoanOffer(
           loanPeriod: ${parseInt(loanPeriod)}, 
@@ -56,35 +54,22 @@ app.post("/calculate", async (req, res) => {
           ${isTwoDocs ? "proofOfIncome: no_needed," : ""}
         ) { name bankName rate paymentDetails { payment } } 
       }`;
-
-      const resp = await fetch(GRAPHQL_ENDPOINT, { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ query }) 
-      });
+      const resp = await fetch(GRAPHQL_ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
       const json = await resp.json();
       return json?.data?.getLoanOffer || [];
     };
 
     const results = await Promise.all(typesToQuery.map(t => fetchByType(t)));
     const flatOffers = results.flat();
-    
     const unique = [];
     const seen = new Set();
-    
     flatOffers.sort((a, b) => a.rate - b.rate).forEach(o => {
       const key = `${o.bankName}-${o.rate}-${o.paymentDetails?.[0]?.payment}`;
       if (!seen.has(key)) {
         seen.add(key);
-        unique.push({ 
-          program: o.name, 
-          bank: o.bankName, 
-          rate: o.rate, 
-          monthlyPayment: o.paymentDetails?.[0]?.payment || 0 
-        });
+        unique.push({ program: o.name, bank: o.bankName, rate: o.rate, monthlyPayment: o.paymentDetails?.[0]?.payment || 0 });
       }
     });
-
     res.json(unique);
   } catch (err) { res.status(500).json([]); }
 });
