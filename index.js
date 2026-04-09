@@ -64,7 +64,7 @@ app.post("/calculate", async (req, res) => {
     const unique = [];
     const seen = new Set();
     flatOffers.sort((a, b) => a.rate - b.rate).forEach(o => {
-      // 1. ИСКЛЮЧАЕМ БАНК ПРИМОРЬЕ
+      // ИСКЛЮЧАЕМ БАНК ПРИМОРЬЕ
       if (o.bankName === "Приморье") return;
 
       const key = `${o.bankName}-${o.rate}-${o.paymentDetails?.[0]?.payment}`;
